@@ -56,10 +56,16 @@ para limitar concurrencia. Los jobs persisten en
 - **Env de calibración**: `invest-cal` (conda-forge, Python 3.12) en
   `C:\Users\Nogales\.conda\envs\invest-cal`. Trae **natcap.invest 3.20.1**,
   gdal 3.12, geopandas, rasterstats, matplotlib-base, pandas + `spotpy` (pip) +
-  `invest_mcp` y `invest-calibration-assistant` (pip -e). No se pudo añadir
-  natcap.invest a `invest-geo` (choca el pin `gdal==3.10.*`), de ahí el env
-  aparte. matplotlib-base crashea al hacer `savefig` headless → `make_plots`
-  por defecto False en el core.
+  `invest_mcp` y `invest-calibration-assistant` (pip -e, apunta a
+  `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`). No se pudo
+  añadir natcap.invest a `invest-geo` (choca el pin `gdal==3.10.*`), de ahí el
+  env aparte.
+- **matplotlib está roto en las envs conda de esta máquina** (Agg crashea en
+  `savefig` con `0xc06d007f`, un lío de DLLs nativas del sistema, no del código).
+  Por eso el core: (a) siempre escribe `FIGURES/dotty_data_<MODELO>.json` (numpy
+  puro), (b) intenta el JPG en un **subproceso aparte** (`core/_plot_worker.py`)
+  que si crashea no tumba la calibración. Los JPG sí salen donde matplotlib
+  funcione (Workbench, CI, Linux).
 - Registrado en Claude Code, scope local (`C:\Users\Nogales\.claude.json`), nombre `invest`.
 - El servidor (.venv) llama al worker geo por subproceso:
   `<invest-geo>\python.exe -m invest_mcp.geo.preflight` con `GDAL_DATA` / `PROJ_DATA`

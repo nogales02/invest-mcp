@@ -324,7 +324,7 @@ def validate_calibration_config(config: dict) -> dict[str, Any]:
 
 def run_calibration(model: str, parameters: dict, objective: str, optimizer: dict,
                     observed_data_path: str, model_inputs: dict,
-                    results_suffix: str = "", make_plots: bool = False,
+                    results_suffix: str = "", make_plots: bool = True,
                     wait_seconds: int = 0) -> dict[str, Any]:
     """Start a calibration job for an InVEST hydrological model.
 
@@ -385,6 +385,11 @@ def get_calibration_job(job_id: str) -> dict[str, Any]:
             out["result"] = {k: res.get(k) for k in (
                 "ok", "model", "objective_metric", "best_parameters", "best_objective",
                 "obs_vs_sim", "diagnostics", "n_iterations", "warnings", "artifacts")}
+            # dotty-plot data (per-param sampled values + best point) for the LLM
+            # or user to plot; the JPG is best-effort (see shared-core plots).
+            arts = res.get("artifacts") or {}
+            out["result"]["dotty_data"] = [
+                f for f in (arts.get("figures") or []) if str(f).endswith(".json")]
     if job.status == "failed":
         out["error_summary"] = job.error_summary
     return out
