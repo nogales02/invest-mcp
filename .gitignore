@@ -11,3 +11,7 @@ dist/
 # local job workspaces if placed inside the repo
 _workspaces/
 invest-mcp-data/
+
+# large local test dataset (dummy InVEST case)
+Dummy_InVEST/
+Dummy_InVEST.zip

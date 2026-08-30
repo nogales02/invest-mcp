@@ -61,14 +61,10 @@ def detect_invest_exe() -> Path | None:
 
 
 _GEO_ENV_NAME = "invest-geo"
+_CAL_ENV_NAME = "invest-cal"
 
 
-def detect_geo_python() -> Path | None:
-    """Locate the python.exe of the ``invest-geo`` conda environment."""
-    env = os.environ.get("INVEST_MCP_GEO_PYTHON")
-    if env and Path(env).is_file():
-        return Path(env)
-
+def _conda_env_roots() -> list[Path]:
     roots: list[Path] = []
     for var in ("CONDA_ROOT", "CONDA_PREFIX", "MAMBA_ROOT_PREFIX"):
         val = os.environ.get(var)
@@ -81,11 +77,18 @@ def detect_geo_python() -> Path | None:
         Path(r"C:\ProgramData\miniconda3"),
         Path(r"C:\ProgramData\anaconda3"),
     ]
+    return roots
+
+
+def _detect_env_python(env_name: str, override_var: str) -> Path | None:
+    env = os.environ.get(override_var)
+    if env and Path(env).is_file():
+        return Path(env)
     seen: set[Path] = set()
-    for root in roots:
+    for root in _conda_env_roots():
         for cand in (
-            root / "envs" / _GEO_ENV_NAME / "python.exe",
-            root / "envs" / _GEO_ENV_NAME / "bin" / "python",
+            root / "envs" / env_name / "python.exe",
+            root / "envs" / env_name / "bin" / "python",
         ):
             if cand in seen:
                 continue
@@ -93,6 +96,17 @@ def detect_geo_python() -> Path | None:
             if cand.is_file():
                 return cand
     return None
+
+
+def detect_geo_python() -> Path | None:
+    """Locate the python.exe of the ``invest-geo`` conda environment."""
+    return _detect_env_python(_GEO_ENV_NAME, "INVEST_MCP_GEO_PYTHON")
+
+
+def detect_cal_python() -> Path | None:
+    """Locate the python.exe of the ``invest-cal`` conda environment
+    (natcap.invest + spotpy, used for model calibration)."""
+    return _detect_env_python(_CAL_ENV_NAME, "INVEST_MCP_CAL_PYTHON")
 
 
 def geo_subprocess_env(geo_python: Path) -> dict[str, str]:
@@ -130,6 +144,7 @@ class Settings(BaseSettings):
 
     invest_exe: Path | None = Field(default=None)
     geo_python: Path | None = Field(default=None)
+    cal_python: Path | None = Field(default=None)
     data_root: Path = Field(default_factory=lambda: Path.home() / "invest-mcp-data")
     allowed_input_dirs: list[Path] = Field(default_factory=list)
     max_concurrent_jobs: int = Field(default=2, ge=1, le=32)
@@ -172,6 +187,21 @@ class Settings(BaseSettings):
                 "pygeoprocessing pip`), then `pip install -e . --no-deps` into it. "
                 "Or set INVEST_MCP_GEO_PYTHON to a python.exe that has "
                 "rasterio + pyproj + shapely + pyogrio."
+            )
+        return Path(p)
+
+    @property
+    def resolved_cal_python(self) -> Path:
+        p = self.cal_python or detect_cal_python()
+        if p is None:
+            raise RuntimeError(
+                "The 'invest-cal' conda environment was not found. Create it with "
+                "`conda create -n invest-cal -c conda-forge --override-channels "
+                "python=3.12 natcap.invest geopandas rasterstats matplotlib-base "
+                "openpyxl rasterio pyogrio shapely pyproj pygeoprocessing pandas "
+                "numpy pip`, then `pip install spotpy` and "
+                "`pip install invest-calibration-assistant` into it. "
+                "Or set INVEST_MCP_CAL_PYTHON."
             )
         return Path(p)
 

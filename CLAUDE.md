@@ -53,6 +53,13 @@ para limitar concurrencia. Los jobs persisten en
   `conda create -n invest-geo -c conda-forge --override-channels ...` (los canales
   `defaults` de Anaconda piden aceptar ToS — usar siempre `-c conda-forge
   --override-channels`, y `nodefaults` en environment.yml).
+- **Env de calibración**: `invest-cal` (conda-forge, Python 3.12) en
+  `C:\Users\Nogales\.conda\envs\invest-cal`. Trae **natcap.invest 3.20.1**,
+  gdal 3.12, geopandas, rasterstats, matplotlib-base, pandas + `spotpy` (pip) +
+  `invest_mcp` y `invest-calibration-assistant` (pip -e). No se pudo añadir
+  natcap.invest a `invest-geo` (choca el pin `gdal==3.10.*`), de ahí el env
+  aparte. matplotlib-base crashea al hacer `savefig` headless → `make_plots`
+  por defecto False en el core.
 - Registrado en Claude Code, scope local (`C:\Users\Nogales\.claude.json`), nombre `invest`.
 - El servidor (.venv) llama al worker geo por subproceso:
   `<invest-geo>\python.exe -m invest_mcp.geo.preflight` con `GDAL_DATA` / `PROJ_DATA`
@@ -78,8 +85,11 @@ src/invest_mcp/
   geo/
     client.py        (server-side) build_payload + subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
+  calibration/
+    client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
+    worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 12 tools MCP + register(server)
+  tools.py           las 16 tools MCP + register(server)
   server.py          build_server() -> MCPServer; main() corre stdio
 tests/               test_spec_translate.py, test_sandbox.py, test_geo_payload.py  (13 tests)
 ```
@@ -106,6 +116,10 @@ importar el módulo sin GDAL, aunque nunca lo ejecuta).
 | `list_invest_jobs(limit=20)` | Runs recientes. |
 | `cancel_invest_job(job_id)` | Mata un run en cola o en marcha. |
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
+| `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
+| `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Solo **SDR** cableado. |
+| `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, diagnostics. |
+| `cancel_calibration_job(job_id)` | Mata un job de calibración. |
 
 Convenciones:
 - `args` es el dict de args de InVEST tal cual; **rutas absolutas**.
@@ -128,6 +142,12 @@ Convenciones:
   `no_spatial_overlap`, `nodata_undefined`, `pixel_size_mismatch`. Escenario limpio → `ok: True`.
 - **Ciclo de job completo**: submit → subproceso → estado terminal → log → `provenance.json`.
   Probado con un run que falla a propósito.
+- **Calibración (SDR)**: probado end-to-end (.venv → subproceso → env invest-cal →
+  `invest_calibration_assistant.core.calibrate`) contra `Dummy_InVEST`: 10 iter LHS de
+  InVEST SDR + run best + diagnostics, ~18s. El motor es el **núcleo compartido**
+  extraído del plugin del Workbench del usuario (repo `Invest_Plugin_Calibration`,
+  rama `refactor/shared-core`, patch en scratchpad `shared-core.patch`). Solo SDR
+  cableado; AWY/SWY/NDR_N/NDR_P siguen en la ruta legacy del plugin hasta portarlos.
 - `wait_seconds` bloquea hasta que el job está *finalizado* (provenance escrita),
   no solo hasta que cambia el estado (se arregló una race con `threading.Event`).
 - 13 tests en verde.

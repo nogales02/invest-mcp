@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from invest_mcp import invest_cli
+from invest_mcp.calibration import client as cal_client
 from invest_mcp.config import get_settings
 from invest_mcp.execution.jobs import TERMINAL, JobStore
 from invest_mcp.execution.runner import JobRunner, _tail
@@ -30,6 +31,7 @@ from invest_mcp.workspace.sandbox import SandboxError, allow_dir, resolve_input_
 _SETTINGS = get_settings()
 _STORE = JobStore(_SETTINGS)
 _RUNNER = JobRunner(_SETTINGS, _STORE)
+_CAL_RUNNER = cal_client.CalibrationRunner(_SETTINGS, _STORE)
 
 
 # ---------------------------------------------------------------------------
@@ -47,12 +49,18 @@ def invest_env() -> dict[str, Any]:
         geo_python: str | None = str(_SETTINGS.resolved_geo_python)
     except RuntimeError:
         geo_python = None
+    try:
+        cal_python: str | None = str(_SETTINGS.resolved_cal_python)
+    except RuntimeError:
+        cal_python = None
     return {
         "ok": True,
         "invest_exe": exe,
         "invest_version": ver,
         "geo_python": geo_python,
         "geo_preflight_available": geo_python is not None,
+        "cal_python": cal_python,
+        "calibration_available": cal_python is not None,
         "data_root": str(_SETTINGS.data_root),
         "jobs_dir": str(_SETTINGS.jobs_dir),
         "allowed_input_roots": [str(p) for p in _SETTINGS.allowed_roots()],
@@ -276,6 +284,120 @@ def list_invest_job_artifacts(job_id: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# calibration  (AWY / SWY / SDR / NDR — engine shared with the Workbench plugin)
+# ---------------------------------------------------------------------------
+def _sandbox_calibration_inputs(observed_data_path: str, model_inputs: dict) -> list[dict]:
+    roots = _SETTINGS.allowed_roots()
+    issues: list[dict] = []
+    for label, val in [("observed_data_path", observed_data_path),
+                       *[(f"model_inputs.{k}", v) for k, v in (model_inputs or {}).items()
+                         if isinstance(v, str) and (k.endswith("_path") or k.endswith("_table"))]]:
+        if not val:
+            continue
+        try:
+            resolve_input_path(str(val), roots)
+        except SandboxError as exc:
+            issues.append({"field": label, "problem": str(exc)})
+    return issues
+
+
+def validate_calibration_config(config: dict) -> dict[str, Any]:
+    """Check a calibration config without running it: model/params/objective,
+    observed-data columns, biophysical `Status_Cal_*` flags, factor caps, and
+    that every input path is inside an allowed folder."""
+    cfg = dict(config or {})
+    # the server assigns the real workspace at submit time; fill a placeholder so
+    # the validator doesn't flag it as missing.
+    cfg.setdefault("workspace_dir", str(_SETTINGS.data_root / "_validate_cal"))
+    sb = _sandbox_calibration_inputs(cfg.get("observed_data_path", ""),
+                                     cfg.get("model_inputs", {}))
+    try:
+        res = _CAL_RUNNER.validate(cfg)
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc), "sandbox_issues": sb}
+    res.setdefault("issues", [])
+    res["sandbox_issues"] = sb
+    res["ok"] = res.get("ok", False) and not sb and not any(
+        i.get("level") == "error" for i in res["issues"])
+    return res
+
+
+def run_calibration(model: str, parameters: dict, objective: str, optimizer: dict,
+                    observed_data_path: str, model_inputs: dict,
+                    results_suffix: str = "", make_plots: bool = False,
+                    wait_seconds: int = 0) -> dict[str, Any]:
+    """Start a calibration job for an InVEST hydrological model.
+
+    `model`: one of AWY, SWY, SDR, NDR_N, NDR_P (SDR wired first).
+    `parameters`: {name: {"min": .., "max": .., "value": ..}} — keys per model
+      (see the shared-core docs; e.g. SDR: sdr_max, Borselli-K_SDR, IC0, L_max,
+      Factor-C, Factor-P).
+    `objective`: MSE | MAE | RMSE | RRMSE.
+    `optimizer`: {"method": "DDS"|"LHS"|"SCE-UA", "n_simulations": >=10, "seed": ..}.
+    `observed_data_path`: CSV with `ws_id` + a column named like the model.
+    `model_inputs`: the InVEST inputs (absolute paths) + threshold_flow_accumulation.
+    Returns a job_id; poll get_calibration_job(job_id)."""
+    sb = _sandbox_calibration_inputs(observed_data_path, model_inputs)
+    if sb:
+        return {"ok": False, "error": "input path(s) rejected", "sandbox_issues": sb}
+
+    config = {
+        "model": str(model).upper(),
+        "results_suffix": results_suffix or None,
+        "optimizer": optimizer or {},
+        "objective": objective,
+        "parameters": parameters or {},
+        "observed_data_path": observed_data_path,
+        "model_inputs": model_inputs or {},
+        "run_best": True,
+        "make_plots": bool(make_plots),
+    }
+    try:
+        job = _CAL_RUNNER.submit(config)
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+
+    if wait_seconds and wait_seconds > 0:
+        job = _CAL_RUNNER.wait(job.id, min(wait_seconds, 3600)) or job
+
+    out = job.public_dict()
+    out["ok"] = True
+    out["hint"] = "poll get_calibration_job(job_id) until status is terminal"
+    return out
+
+
+def get_calibration_job(job_id: str) -> dict[str, Any]:
+    """Status of a calibration job. While running: last iterations. When done:
+    best parameters, objective value, observed-vs-simulated table, parameter
+    diagnostics and artifact paths."""
+    job = _STORE.get(job_id)
+    if job is None:
+        return {"ok": False, "error": f"No such job: {job_id}"}
+    out = job.public_dict()
+    out["ok"] = True
+    out["progress"] = cal_client.read_progress(job, tail=25)
+    if job.status in TERMINAL:
+        res = cal_client.read_result(job)
+        if res:
+            out["result"] = {k: res.get(k) for k in (
+                "ok", "model", "objective_metric", "best_parameters", "best_objective",
+                "obs_vs_sim", "diagnostics", "n_iterations", "warnings", "artifacts")}
+    if job.status == "failed":
+        out["error_summary"] = job.error_summary
+    return out
+
+
+def cancel_calibration_job(job_id: str) -> dict[str, Any]:
+    """Terminate a running calibration job."""
+    job = _CAL_RUNNER.cancel(job_id)
+    if job is None:
+        return {"ok": False, "error": f"No such job: {job_id}"}
+    out = job.public_dict()
+    out["ok"] = True
+    return out
+
+
+# ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
 _TOOLS = [
@@ -291,6 +413,10 @@ _TOOLS = [
     list_invest_jobs,
     cancel_invest_job,
     list_invest_job_artifacts,
+    validate_calibration_config,
+    run_calibration,
+    get_calibration_job,
+    cancel_calibration_job,
 ]
 
 
