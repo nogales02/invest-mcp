@@ -28,6 +28,11 @@ One payload, one operation, selected by ``op``:
        "target_crs":"...|null", "resolution":[x,y]|null,
        "extent":[minx,miny,maxx,maxy]|null, "resampling":"nearest"}``
 
+``raster_classes``
+    Unique integer class values of a categorical raster (e.g. a LULC map) with
+    pixel counts -- used to seed a biophysical-table skeleton. No file is written.
+    ``{"op":"raster_classes", "src":"...", "max_classes":1000}``
+
 Output (stdout, JSON)::
 
     {"ok": bool, "op": "...", "outputs": [<layer description>, ...], "notes": [...]}
@@ -318,7 +323,49 @@ def _op_align_stack(p: dict) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-_OPS = {"reproject": _op_reproject, "clip": _op_clip, "align_stack": _op_align_stack}
+# unique class values of a (categorical) raster -- for table skeletons
+# ---------------------------------------------------------------------------
+def _op_raster_classes(p: dict) -> list[dict]:
+    import numpy as np
+    import rasterio
+
+    src = p["src"]
+    max_classes = int(p.get("max_classes") or 1000)
+    with rasterio.open(src) as ds:
+        nodata = ds.nodata
+        arr = ds.read(1, masked=True).compressed()
+
+    note = None
+    if not np.issubdtype(arr.dtype, np.integer):
+        if arr.size and float(np.max(np.abs(arr - np.round(arr)))) > 1e-9:
+            note = "raster values are not integers; rounded for the class list"
+        arr = np.round(arr).astype("int64")
+
+    vals, counts = np.unique(arr, return_counts=True)
+    truncated = bool(vals.size > max_classes)
+    if truncated:  # keep the most common, then re-sort by value
+        keep = np.argsort(counts)[::-1][:max_classes]
+        vals, counts = vals[keep], counts[keep]
+        order = np.argsort(vals)
+        vals, counts = vals[order], counts[order]
+
+    return [{
+        "src": src,
+        "nodata": (None if nodata is None else float(nodata)),
+        "class_count": int(vals.size),
+        "truncated": truncated,
+        "classes": [{"value": int(v), "pixels": int(c)} for v, c in zip(vals, counts)],
+        "note": note,
+    }]
+
+
+# ---------------------------------------------------------------------------
+_OPS = {
+    "reproject": _op_reproject,
+    "clip": _op_clip,
+    "align_stack": _op_align_stack,
+    "raster_classes": _op_raster_classes,
+}
 
 
 def run(payload: dict) -> dict:

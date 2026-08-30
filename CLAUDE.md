@@ -97,7 +97,7 @@ src/invest_mcp/
   invest_cli.py      subproceso: version / list / getspec / validate  (fuerza UTF-8)
   models/
     registry.py      lista modelos, cachea specs (lru_cache), resuelve alias
-    spec_translate.py  MODEL_SPEC -> JSON Schema del `args` + briefing markdown
+    spec_translate.py  MODEL_SPEC -> JSON Schema del `args` + briefing markdown + table_arg_specs (columnas de cada CSV + index_col)
   execution/
     jobs.py          Job (dataclass) + JobStore persistente (job.json por job)
     runner.py        lanza `invest run`, semáforo, cancel (taskkill /T), wait (Event)
@@ -105,20 +105,21 @@ src/invest_mcp/
     sandbox.py       allow-list de rutas de entrada (resolve_input_path) + de salida (resolve_output_path) + allow_dir de sesión
     project.py       convención de "proyecto InVEST": scaffold del árbol + project.json (stdlib, corre en el server)
     readiness.py     escanea data/ + tables/, adivina rol por nombre, casa contra los inputs required de cada modelo (stdlib + spec_translate; puro)
+    biotable.py      esqueleto de tabla biofísica: expande columnas [MONTH]/[SOIL_GROUP], ensambla el CSV (una fila por lucode, celdas en blanco), parsea leyenda (stdlib; puro)
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
-    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack + run_delineate_watersheds; subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
     summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
     compare.py       (CORRE EN invest-geo) alinea escenario->baseline, ráster diferencia + delta stats + zonal + escribe compare.json
-    prep.py          (CORRE EN invest-geo) rutinas deterministas: op=reproject|clip|align_stack (raster+vector); lee JSON de stdin, escribe salidas + describe cada capa
+    prep.py          (CORRE EN invest-geo) rutinas deterministas: op=reproject|clip|align_stack|raster_classes (raster+vector); lee JSON de stdin, escribe salidas + describe cada capa
     hydro.py         (CORRE EN invest-geo) delineación de cuencas: pygeoprocessing fill_pits→flow_dir_d8→flow_accum→extract_streams_d8→snap outlets→delineate_watersheds_d8; escribe el vector de cuencas + intermedios en `<dst_stem>_hydro/`
     _preview_worker.py  (SUBPROCESO AISLADO) rinde el PNG de preview (matplotlib), best-effort; `--diverging` = RdBu_r centrado en 0 para un ráster diferencia
   calibration/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 24 tools MCP + register(server)
+  tools.py           las 25 tools MCP + register(server)
   resources.py       4 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos) + register(server)
   prompts.py         2 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios) + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
@@ -129,7 +130,7 @@ INSTALL.md           referencia terse: prereqs + snippets de config por cliente 
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_calibration_tools, test_summarize, test_compare,
                      test_prep, test_readiness, test_resources_prompts,
-                     test_hydro  (57 tests)
+                     test_hydro, test_biotable  (67 tests)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
@@ -146,7 +147,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (24 tools) + 4 resources + 2 prompts
+## 4. Tool surface (25 tools) + 4 resources + 2 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -170,6 +171,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `clip_to_aoi(src_path, dst_path, aoi_path, all_touched=False)` | Recorta un ráster (crop al bbox del AOI + máscara) o vector (`gpd.clip`) al polígono de `aoi_path`. El AOI se reproyecta al CRS de la capa. Necesita `invest-geo`. |
 | `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")` | Pone varios rásters en **una malla idéntica** (mismo CRS + tamaño de píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`. Malla **o** desde `reference_path` (un ráster) **o** desde `target_crs`+`resolution`+`extent` juntos. `resampling` se aplica a todos (correr dos veces si mezcla categóricos y continuos). Necesita `invest-geo`. |
 | `delineate_watersheds(dem_path, outlets_path, dst_path, threshold_flow_accumulation=1000, snap_distance_px=10, fill_pits=True, keep_intermediate=False)` | Corta polígonos de cuenca aguas arriba de puntos de salida con la cadena D8 de **pygeoprocessing** (mismo motor que InVEST → las cuencas cuadran con el routing de SDR/NDR/SWY): fill_pits → flow_dir_d8 → flow_accum → streams (umbral en px) → snap de cada outlet a la red → `delineate_watersheds_d8`. Reproyecta los outlets al CRS del DEM. Escribe `.gpkg`/`.shp`/`.geojson`; intermedios en `<dst_stem>_hydro/` (se borran salvo `keep_intermediate`). `snap_distance_px=0` desactiva el snap. Devuelve descripción del vector + `snap_report` por punto. Necesita `invest-geo`. |
+| `tables_from_template(model_id, lulc_path, dst_path, table_arg="", legend_path="", include_optional=True, max_classes=1000)` | Esqueleto de tabla biofísica/lookup de un modelo: una fila por lucode único del LULC + las columnas que pide su MODEL_SPEC (celdas de coeficiente en blanco). `table_arg` = qué CSV templetar (auto-detecta el que va por `lucode`; si hay varios, el error los lista). `legend_path` (CSV `code,label`) → añade columna `description`. Expande `[MONTH]`→`_1..12` y `[SOIL_GROUP]`→`_a..d`; otros `[TOKEN]` quedan literales con nota. Devuelve `headers`, `column_help` (about/units/requirement por columna), `classes` (valor+px), `narrative`. Necesita `invest-geo` (lee las clases del ráster). |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
 | `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
 | `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, `diagnostics` (sensibilidad Spearman por parámetro), `dotty_data` (rutas a JSON ploteables). |
@@ -289,8 +291,17 @@ Convenciones:
   **exacto**) y 708 km²; atributos (`name`) preservados. Intermedios (DEM relleno,
   flow dir/accum, streams, outlets snapped) en `<dst_stem>_hydro/`. `_run_prep`
   refactorizado a `_run_geo_worker` genérico (mismo stub en tests).
-- 57 tests en verde (nuevos `test_prep`, `test_readiness`, `test_resources_prompts`,
-  `test_hydro` — todo puro). Registrado y "Connected" en Claude Code.
+- **`tables_from_template`** end-to-end (2026-08-30, .venv → subproceso →
+  invest-geo → `op=raster_classes`) sobre `Dummy_InVEST/INPUTS/LULC/LULC.tif`
+  (8 clases: 10,20,…,90). `carbon` → `lucode,c_above,c_below,c_soil,c_dead` (=
+  cabecera real de `Carbon_Pools.csv`); `ndr` → 9 columnas todas marcadas
+  `required if: calc_n`/`calc_p`; `annual_water_yield` sin `table_arg` → error que
+  lista `biophysical_table_path` + `demand_table_path` (ambos van por `lucode`);
+  `seasonal_water_yield` → `cn_a..cn_d` + `kc_1..kc_12` expandidos + columna
+  `description` de la leyenda. `spec_translate.table_arg_specs` extrae columnas +
+  `index_col` del spec; `workspace/biotable.py` ensambla el CSV (puro).
+- 67 tests en verde (nuevos `test_prep`, `test_readiness`, `test_resources_prompts`,
+  `test_hydro`, `test_biotable` — todo puro). Registrado y "Connected" en Claude Code.
 
 ### Pendiente
 - `conda-lock` para solves 100% reproducibles entre plataformas.
@@ -370,8 +381,10 @@ receta que el LLM sigue y adapta.
   inválidas, multipart→singlepart, encoding y nombres de columna de CSVs.
 
 **Tablas biofísicas / lookup**
-- `[tool]` `tables_from_template` — dado el LULC, sacar clases únicas y emitir el
-  esqueleto de tabla con una fila por `lucode` y las columnas del modelo.
+- ~~`[tool]` `tables_from_template`~~ **HECHO** (2026-08-30) — `workspace/biotable.py`
+  + `op=raster_classes` en `prep.py` + `spec_translate.table_arg_specs`. Una fila
+  por `lucode`, columnas del MODEL_SPEC, expande `[MONTH]`/`[SOIL_GROUP]`, leyenda
+  opcional. Verificado end-to-end (ver §5).
 - `[resource]` base de coeficientes citados por clase de cobertura y región.
 - `[tool]` `check_table_vs_raster` — toda clase del ráster tiene fila, sin
   huérfanas, rangos con sentido.

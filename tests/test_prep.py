@@ -157,3 +157,10 @@ def test_prep_payload_is_json_serialisable(captured_payload):
                                target_crs="EPSG:4326", resolution=[0.001, 0.001],
                                extent=[0, 0, 1, 1])
     json.dumps(captured_payload["payload"])  # must not raise
+
+
+def test_run_raster_classes_builds_payload(captured_payload):
+    geo_client.run_raster_classes("lulc.tif", settings=None, max_classes=50)
+    assert captured_payload["payload"] == {
+        "op": "raster_classes", "src": "lulc.tif", "max_classes": 50,
+    }
