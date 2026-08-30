@@ -6,9 +6,9 @@
                    list_invest_jobs, cancel_invest_job
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
-    data prep      scaffold_project, project_readiness, reproject_layer,
-                   clip_to_aoi, align_raster_stack, delineate_watersheds,
-                   tables_from_template
+    data prep      scaffold_project, project_readiness, fetch_dem,
+                   reproject_layer, clip_to_aoi, align_raster_stack,
+                   delineate_watersheds, tables_from_template
     admin          invest_env, allow_input_dir
 
 Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
@@ -792,6 +792,48 @@ def delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
     return {"ok": bool(res.get("ok")), "dem": dem, "outlets": outlets, "dst": dst, **res}
 
 
+def fetch_dem(dst_path: str, aoi_path: str = "", bbox: list[float] | None = None,
+              target_crs: str = "", target_resolution: list[float] | None = None,
+              clip_to_aoi: bool = True, buffer_deg: float = 0.05,
+              resampling: str = "bilinear", source: str = "cop30",
+              keep_intermediate: bool = False) -> dict[str, Any]:
+    """Download a DEM for an area of interest and land it as a GeoTIFF.
+
+    Source (`source="cop30"`, the only one wired up): Copernicus DEM GLO-30
+    (~30 m, near-global) from the public AWS bucket `copernicus-dem-30m` -- no
+    credentials. This contacts `copernicus-dem-30m.s3.amazonaws.com` only.
+
+    Give the area as `aoi_path` (a vector; its bounds drive the download and,
+    with `clip_to_aoi`, the raster is masked to the polygon) and/or `bbox` as
+    `[minx, miny, maxx, maxy]` in **lon/lat degrees (EPSG:4326)**. `buffer_deg`
+    pads the bounds first. `target_crs` / `target_resolution` reproject the
+    result (e.g. onto the project CRS, `resampling` default `bilinear`). Ocean /
+    out-of-coverage tiles are skipped and listed in `tiles_missing`. Writes
+    `dst_path` (must sit under an allowed folder). Needs the `invest-geo` env.
+    """
+    if not aoi_path and not bbox:
+        return {"ok": False, "error": "provide aoi_path or bbox [minx,miny,maxx,maxy] (lon/lat)"}
+    if bbox is not None and len(bbox) != 4:
+        return {"ok": False, "error": "bbox must be [minx, miny, maxx, maxy] in lon/lat degrees"}
+    roots = _SETTINGS.allowed_roots()
+    try:
+        dst = str(resolve_output_path(dst_path, roots))
+        aoi = str(resolve_input_path(aoi_path, roots)) if aoi_path else None
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        res = geo_client.run_fetch_dem(
+            dst, _SETTINGS, source=source or "cop30",
+            bbox_wgs84=[float(v) for v in bbox] if bbox else None,
+            aoi_path=aoi, clip_to_aoi=bool(clip_to_aoi), buffer_deg=float(buffer_deg),
+            target_crs=(str(target_crs) or None), target_resolution=target_resolution,
+            resampling=resampling or "bilinear",
+            keep_intermediate=bool(keep_intermediate))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    return {"ok": bool(res.get("ok")), "dst": dst, "aoi": aoi, **res}
+
+
 def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
                          table_arg: str = "", legend_path: str = "",
                          include_optional: bool = True,
@@ -1113,6 +1155,7 @@ _TOOLS = [
     compare_scenarios,
     scaffold_project,
     project_readiness,
+    fetch_dem,
     reproject_layer,
     clip_to_aoi,
     align_raster_stack,

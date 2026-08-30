@@ -315,6 +315,7 @@ def run_comparison(
 # ---------------------------------------------------------------------------
 _PREP_TIMEOUT_S = 1800
 _HYDRO_TIMEOUT_S = 3600
+_FETCH_TIMEOUT_S = 1800
 
 
 def _run_geo_worker(module: str, payload: dict, settings: Settings, *,
@@ -377,6 +378,22 @@ def run_align_stack(rasters: list[dict], settings: Settings, *,
 def run_raster_classes(src: str, settings: Settings, *, max_classes: int = 1000) -> dict:
     return _run_prep({"op": "raster_classes", "src": src,
                       "max_classes": max_classes}, settings)
+
+
+def run_fetch_dem(dst_path: str, settings: Settings, *, source: str = "cop30",
+                  bbox_wgs84: list[float] | None = None, aoi_path: str | None = None,
+                  clip_to_aoi: bool = True, buffer_deg: float = 0.05,
+                  target_crs: str | None = None,
+                  target_resolution: list[float] | None = None,
+                  resampling: str = "bilinear",
+                  keep_intermediate: bool = False) -> dict:
+    return _run_geo_worker("invest_mcp.geo.fetch", {
+        "op": "dem", "source": source, "dst_path": dst_path,
+        "bbox_wgs84": bbox_wgs84, "aoi_path": aoi_path,
+        "clip_to_aoi": bool(clip_to_aoi), "buffer_deg": buffer_deg,
+        "target_crs": target_crs, "target_resolution": target_resolution,
+        "resampling": resampling, "keep_intermediate": bool(keep_intermediate),
+    }, settings, timeout=_FETCH_TIMEOUT_S, label="DEM fetch")
 
 
 def run_delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
