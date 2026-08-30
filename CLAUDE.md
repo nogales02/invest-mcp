@@ -107,17 +107,18 @@ src/invest_mcp/
     readiness.py     escanea data/ + tables/, adivina rol por nombre, casa contra los inputs required de cada modelo (stdlib + spec_translate; puro)
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
-    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_prep/run_reproject/run_clip/run_align_stack; subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack + run_delineate_watersheds; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
     summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
     compare.py       (CORRE EN invest-geo) alinea escenario->baseline, ráster diferencia + delta stats + zonal + escribe compare.json
     prep.py          (CORRE EN invest-geo) rutinas deterministas: op=reproject|clip|align_stack (raster+vector); lee JSON de stdin, escribe salidas + describe cada capa
+    hydro.py         (CORRE EN invest-geo) delineación de cuencas: pygeoprocessing fill_pits→flow_dir_d8→flow_accum→extract_streams_d8→snap outlets→delineate_watersheds_d8; escribe el vector de cuencas + intermedios en `<dst_stem>_hydro/`
     _preview_worker.py  (SUBPROCESO AISLADO) rinde el PNG de preview (matplotlib), best-effort; `--diverging` = RdBu_r centrado en 0 para un ráster diferencia
   calibration/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 23 tools MCP + register(server)
+  tools.py           las 24 tools MCP + register(server)
   resources.py       4 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos) + register(server)
   prompts.py         2 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios) + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
@@ -127,11 +128,13 @@ docs/                INSTALACION-PASO-A-PASO.md  guía "para dummies" (ES): de c
 INSTALL.md           referencia terse: prereqs + snippets de config por cliente + seguridad
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_calibration_tools, test_summarize, test_compare,
-                     test_prep, test_readiness, test_resources_prompts  (52 tests)
+                     test_prep, test_readiness, test_resources_prompts,
+                     test_hydro  (57 tests)
 ```
 
-`geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`)
-**solo importan stdlib al cargar**; rasterio/pyproj/shapely/pyogrio/geopandas se
+`geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
+`geo/hydro.py`) **solo importan stdlib al cargar**; rasterio/pyproj/shapely/
+pyogrio/geopandas/pygeoprocessing se
 importan dentro de las funciones (para que el env `.venv` pueda importar el
 módulo sin GDAL, aunque nunca lo ejecuta).
 
@@ -143,7 +146,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (23 tools) + 4 resources + 2 prompts
+## 4. Tool surface (24 tools) + 4 resources + 2 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -166,6 +169,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `reproject_layer(src_path, dst_path, target_crs, resampling="nearest", resolution=None)` | Reproyecta un ráster o vector a `target_crs` (EPSG/WKT/proj). `resampling` (solo ráster): `nearest` para categóricos (land cover), `bilinear`/`cubic`/`average` para continuos. `resolution` `[x,y]` opcional = tamaño de píxel objetivo. Necesita `invest-geo`. |
 | `clip_to_aoi(src_path, dst_path, aoi_path, all_touched=False)` | Recorta un ráster (crop al bbox del AOI + máscara) o vector (`gpd.clip`) al polígono de `aoi_path`. El AOI se reproyecta al CRS de la capa. Necesita `invest-geo`. |
 | `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")` | Pone varios rásters en **una malla idéntica** (mismo CRS + tamaño de píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`. Malla **o** desde `reference_path` (un ráster) **o** desde `target_crs`+`resolution`+`extent` juntos. `resampling` se aplica a todos (correr dos veces si mezcla categóricos y continuos). Necesita `invest-geo`. |
+| `delineate_watersheds(dem_path, outlets_path, dst_path, threshold_flow_accumulation=1000, snap_distance_px=10, fill_pits=True, keep_intermediate=False)` | Corta polígonos de cuenca aguas arriba de puntos de salida con la cadena D8 de **pygeoprocessing** (mismo motor que InVEST → las cuencas cuadran con el routing de SDR/NDR/SWY): fill_pits → flow_dir_d8 → flow_accum → streams (umbral en px) → snap de cada outlet a la red → `delineate_watersheds_d8`. Reproyecta los outlets al CRS del DEM. Escribe `.gpkg`/`.shp`/`.geojson`; intermedios en `<dst_stem>_hydro/` (se borran salvo `keep_intermediate`). `snap_distance_px=0` desactiva el snap. Devuelve descripción del vector + `snap_report` por punto. Necesita `invest-geo`. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
 | `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
 | `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, `diagnostics` (sensibilidad Spearman por parámetro), `dotty_data` (rutas a JSON ploteables). |
@@ -276,8 +280,17 @@ Convenciones:
     (`prepare_and_run_model`, `compare_land_use_scenarios`) registrados en
     `build_server()` vía `resources.register` / `prompts.register`. `list_resources`
     / `list_resource_templates` / `list_prompts` del servidor los devuelven.
-- 52 tests en verde (nuevos `test_prep`, `test_readiness`, `test_resources_prompts`
-  — todo puro). Registrado y "Connected" en Claude Code.
+- **`delineate_watersheds`** end-to-end (2026-08-30, .venv → subproceso →
+  invest-geo) sobre `Dummy_InVEST/DEM.tif` (EPSG:32733) con 2 puntos de salida:
+  el píxel de máxima flow-accum (90 289 px) y otro a 8 px en diagonal. Cadena
+  pygeoprocessing completa (`hydro.py`). Snap: punto 0 → 0.0 m (ya en cauce, buen
+  sanity check); punto 1 → 497 m ≈ 5.4 px al cauce más cercano. 2 cuencas
+  MultiPolygon en EPSG:32733; áreas **769.5 km²** (= 90 289 × 92.318² / 1e6
+  **exacto**) y 708 km²; atributos (`name`) preservados. Intermedios (DEM relleno,
+  flow dir/accum, streams, outlets snapped) en `<dst_stem>_hydro/`. `_run_prep`
+  refactorizado a `_run_geo_worker` genérico (mismo stub en tests).
+- 57 tests en verde (nuevos `test_prep`, `test_readiness`, `test_resources_prompts`,
+  `test_hydro` — todo puro). Registrado y "Connected" en Claude Code.
 
 ### Pendiente
 - `conda-lock` para solves 100% reproducibles entre plataformas.
@@ -346,8 +359,11 @@ receta que el LLM sigue y adapta.
   `fetch_hydrography` — descarga desde fuentes de `invest://data-sources`
   (Copernicus GLO-30/SRTM, ESA WorldCover/ESRI LC, CHIRPS/WorldClim, SoilGrids,
   HydroSHEDS). Auth para Earthdata/Copernicus. Van en `invest-geo`.
-- `[tool]` `delineate_watersheds` — routing sobre el DEM + pour points → vectores
-  de cuenca/subcuenca (los piden SDR/NDR/SWY). Determinista, patrón `prep.py`.
+- ~~`[tool]` `delineate_watersheds`~~ **HECHO** (2026-08-30) — `geo/hydro.py`,
+  cadena D8 de pygeoprocessing (fill_pits→flow_dir_d8→flow_accum→extract_streams_d8
+  →snap outlets→delineate_watersheds_d8). Verificado end-to-end (ver §5).
+  Pendiente de afinar: subcuencas anidadas (`calculate_subwatershed_boundary`),
+  MFD opcional, poblar `datasets` del manifest.
 - `[tool]` `build_aoi` — AOI desde punto+buffer / límite administrativo (GADM/GAUL)
   / bbox / snap a cuenca.
 - `[tool]` `sanitize_layer` — arreglar nodata/dtype de rásters, geometrías
