@@ -7,8 +7,9 @@
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
     data prep      scaffold_project, project_readiness, fetch_dem,
-                   fetch_landcover, fetch_climate, fetch_soil, reproject_layer,
-                   clip_to_aoi, align_raster_stack, delineate_watersheds,
+                   fetch_landcover, fetch_climate, fetch_soil,
+                   fetch_hydrography, reproject_layer, clip_to_aoi,
+                   align_raster_stack, delineate_watersheds,
                    tables_from_template
     admin          invest_env, allow_input_dir
 
@@ -1026,6 +1027,69 @@ def fetch_soil(dst_path: str, variable: str, aoi_path: str = "",
     return {"ok": bool(res.get("ok")), "aoi": aoi, **res}
 
 
+def fetch_hydrography(dst_path: str, product: str, aoi_path: str = "",
+                      bbox: list[float] | None = None, source: str = "hydrosheds",
+                      region: str = "", level: int = 8, target_crs: str = "",
+                      clip_to_aoi: bool = False, buffer_deg: float = 0.05,
+                      keep_intermediate: bool = False) -> dict[str, Any]:
+    """Download the river network or basin polygons for an area of interest and
+    land them as a vector file.
+
+    Source (`source="hydrosheds"`, the only one wired up): **HydroSHEDS v1**
+    (WWF / McGill, no credentials). Contacts `data.hydrosheds.org` only.
+
+    `product`:
+      - `"rivers"` -> HydroRIVERS v1.0 line network (discharge `DIS_AV_CMS`,
+        upstream area `UPLAND_SKM`, Strahler order, `NEXT_DOWN` topology).
+      - `"basins"` -> HydroBASINS v1c standard polygons at Pfafstetter `level`
+        `1..12` (1 = continent-scale, 12 = smallest sub-basins; default 8).
+
+    `region` is a HydroSHEDS continental code (`af ar as au eu gr na sa si`).
+    Leave it blank to auto-detect from the AOI centroid -- if the centroid is
+    ambiguous (e.g. the Middle East) the error asks you to pass one.
+
+    Give the area as `aoi_path` and/or `bbox` `[minx,miny,maxx,maxy]` in lon/lat
+    degrees. `clip_to_aoi=False` (default) keeps whole features that intersect
+    the bounding box; `True` geometrically clips them to the AOI polygon (river
+    ends get truncated). `target_crs` reprojects the result. `dst_path`'s
+    extension picks the format (`.gpkg` / `.shp` / `.geojson`). Its folder must
+    be allowed. Needs the `invest-geo` env.
+    """
+    if product not in ("rivers", "basins"):
+        return {"ok": False, "error": "product must be 'rivers' or 'basins'"}
+    if (source or "hydrosheds") != "hydrosheds":
+        return {"ok": False, "error": "only source='hydrosheds' (HydroSHEDS v1) is wired up"}
+    if region and region.lower() not in (
+            "af", "ar", "as", "au", "eu", "gr", "na", "sa", "si"):
+        return {"ok": False, "error": "region must be one of af, ar, as, au, eu, "
+                                      "gr, na, sa, si (HydroSHEDS continental codes)"}
+    if product == "basins" and not (1 <= int(level) <= 12):
+        return {"ok": False, "error": "basins level must be an integer 1..12"}
+    if not aoi_path and not bbox:
+        return {"ok": False, "error": "provide aoi_path or bbox [minx,miny,maxx,maxy] (lon/lat)"}
+    if bbox is not None and len(bbox) != 4:
+        return {"ok": False, "error": "bbox must be [minx, miny, maxx, maxy] in lon/lat degrees"}
+
+    roots = _SETTINGS.allowed_roots()
+    try:
+        resolve_output_path(dst_path, roots)                 # folder must be allowed
+        aoi = str(resolve_input_path(aoi_path, roots)) if aoi_path else None
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        res = geo_client.run_fetch_hydrography(
+            dst_path, product, _SETTINGS, source="hydrosheds",
+            region=(region.lower() or None), level=int(level),
+            bbox_wgs84=[float(v) for v in bbox] if bbox else None,
+            aoi_path=aoi, clip_to_aoi=bool(clip_to_aoi), buffer_deg=float(buffer_deg),
+            target_crs=(str(target_crs) or None),
+            keep_intermediate=bool(keep_intermediate))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    return {"ok": bool(res.get("ok")), "aoi": aoi, **res}
+
+
 def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
                          table_arg: str = "", legend_path: str = "",
                          include_optional: bool = True,
@@ -1351,6 +1415,7 @@ _TOOLS = [
     fetch_landcover,
     fetch_climate,
     fetch_soil,
+    fetch_hydrography,
     reproject_layer,
     clip_to_aoi,
     align_raster_stack,
