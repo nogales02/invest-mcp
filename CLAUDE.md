@@ -117,7 +117,7 @@ importar el módulo sin GDAL, aunque nunca lo ejecuta).
 | `cancel_invest_job(job_id)` | Mata un run en cola o en marcha. |
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
-| `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Solo **SDR** cableado. |
+| `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
 | `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, diagnostics. |
 | `cancel_calibration_job(job_id)` | Mata un job de calibración. |
 

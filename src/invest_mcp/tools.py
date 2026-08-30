@@ -328,10 +328,13 @@ def run_calibration(model: str, parameters: dict, objective: str, optimizer: dic
                     wait_seconds: int = 0) -> dict[str, Any]:
     """Start a calibration job for an InVEST hydrological model.
 
-    `model`: one of AWY, SWY, SDR, NDR_N, NDR_P (SDR wired first).
-    `parameters`: {name: {"min": .., "max": .., "value": ..}} — keys per model
-      (see the shared-core docs; e.g. SDR: sdr_max, Borselli-K_SDR, IC0, L_max,
-      Factor-C, Factor-P).
+    `model`: AWY, SWY, SDR, NDR_N or NDR_P.
+    `parameters`: {name: {"min": .., "max": .., "value": ..}} — keys per model:
+      AWY   Z, Factor-Kc
+      SWY   Alpha, Beta, Gamma, Factor-Kc_m
+      SDR   sdr_max, Borselli-K_SDR, IC0, L_max, Factor-C, Factor-P
+      NDR_N SubCri_Len_N, Sub_Eff_N, Borselli-K_NDR, Factor_Load_N, Factor_Eff_N
+      NDR_P SubCri_Len_P, Sub_Eff_P, Borselli-K_NDR, Factor_Load_P, Factor_Eff_P
     `objective`: MSE | MAE | RMSE | RRMSE.
     `optimizer`: {"method": "DDS"|"LHS"|"SCE-UA", "n_simulations": >=10, "seed": ..}.
     `observed_data_path`: CSV with `ws_id` + a column named like the model.
