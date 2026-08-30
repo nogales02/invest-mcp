@@ -207,6 +207,48 @@ Convenciones:
 
 ## 5. Estado actual
 
+### ⟳ Para retomar (2026-08-30) — dónde estamos
+
+Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
+8–10). Todo verificado end-to-end contra `Dummy_InVEST` o un bbox de los Alpes.
+**28 tools + 4 resources + 2 prompts. 94 tests en verde** (`pytest -q`, 1 skip).
+
+**7 ramas apiladas sobre `main`, NINGUNA fusionada** (cada PR apunta a la de
+abajo; fusionar en este orden o hacer squash de todas):
+
+```
+main
+ └─ data-prep-routines        d951843  scaffold_project + reproject/clip/align_raster_stack + resolve_output_path
+     └─ readiness-resources-prompts  622a3cd  project_readiness + 4 resources + 2 prompts (resources.py, prompts.py)
+         └─ delineate-watersheds     404ad9c  geo/hydro.py (cadena D8 pygeoprocessing)
+             └─ tables-from-template 2d7780d  workspace/biotable.py + op=raster_classes + spec_translate.table_arg_specs
+                 └─ fetch-dem        d6453d1  geo/fetch.py op=dem (Copernicus GLO-30, sin auth)
+                     └─ fetch-landcover  de81391  geo/fetch.py op=landcover (ESA WorldCover, sin auth)
+                         └─ fetch-climate  bd36ba4  geo/climate.py (WorldClim precip + Hargreaves ETo)   ← HEAD
+```
+
+Todas pusheadas a `github.com/nogales02/invest-mcp`. `gh` CLI **no** está
+instalado en esta máquina → los PRs se abren a mano con el link que da `git
+push`.
+
+**Cadena de preparación ya montada** (todas las tools existen y están
+verificadas): `scaffold_project` → `fetch_dem`/`fetch_landcover`/`fetch_climate`
+→ `reproject_layer`/`clip_to_aoi`/`align_raster_stack` → `delineate_watersheds`
+→ `tables_from_template` → `project_readiness` → `validate_invest_args` →
+`run_invest_model` → `summarize_results`/`compare_scenarios`.
+
+**Gotcha de esta sesión:** el acceso a S3 (`*.s3.amazonaws.com`) desde esta
+máquina fue **intermitente** — algunas aperturas `/vsicurl/` tardaron >180 s o
+colgaron (p.ej. el tile COP30 de Angola), otras fueron rápidas (Alpes). No es
+bug del código; reintentar si un `fetch_*` cuelga.
+
+**Siguientes candidatos** (roadmap §6, "Capacidades pendientes por etapa"):
+`fetch_soil` (SoilGrids) · `fetch_hydrography` (HydroSHEDS) · `fetch_climate`
+`source="terraclimate"`/`"chirps"` · base de coeficientes citados `[resource]`
+para rellenar las tablas de `tables_from_template` · `import_datastack` /
+`export_datastack` (punto de integración con el Workbench, aún sin tool) ·
+`build_report`.
+
 ### Funciona / verificado
 - Autodetección de `invest.exe` + envs `invest-geo` / `invest-cal`; `invest_env`,
   `list_invest_models`, `describe_invest_model('carbon')` → schema correcto.
