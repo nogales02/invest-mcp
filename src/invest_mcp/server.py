@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import MCPServer
 
-from invest_mcp import __version__, tools
+from invest_mcp import __version__, prompts, resources, tools
 from invest_mcp.config import get_settings
 
 INSTRUCTIONS = """\
@@ -38,6 +38,8 @@ def build_server() -> MCPServer:
         instructions=INSTRUCTIONS,
     )
     tools.register(server)
+    resources.register(server)
+    prompts.register(server)
     return server
 
 
