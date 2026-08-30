@@ -42,15 +42,20 @@ still works.
   [docs/INSTALACION-PASO-A-PASO.md](docs/INSTALACION-PASO-A-PASO.md).
 - **One-shot script:** from a clone, run
   `powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1`
-  (or `scripts/bootstrap.sh` on POSIX) — makes the venv, installs the package,
-  builds the conda envs, runs `doctor`, prints the client config.
+  (or `scripts/bootstrap.sh` on POSIX). It picks the server env (a `.venv` if you
+  have a system Python ≥ 3.10, else a **conda `invest-mcp` env** — no Python to
+  install; `-CondaServer` forces it), installs the package, builds the
+  `invest-geo` / `invest-cal` conda envs, runs `doctor`, prints the client config.
 - **Full reference** (every client's snippet, security notes): [INSTALL.md](INSTALL.md).
 
 Short version by hand:
 
 ```bash
 git clone https://github.com/nogales02/invest-mcp && cd invest-mcp
-python -m venv .venv && .venv/Scripts/pip install -e .   # POSIX: .venv/bin/pip
+# server env -- pick one:
+python -m venv .venv && .venv/Scripts/pip install -e .          # A) system Python
+micromamba create -f environment-server.yml -y && \
+  micromamba run -n invest-mcp pip install -e .                 # B) no system Python
 invest-mcp setup      # (optional) build the invest-geo + invest-cal conda envs
 invest-mcp doctor     # check what's wired
 invest-mcp mcp-config # print the block to paste into your client

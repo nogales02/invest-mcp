@@ -28,10 +28,14 @@ Son **4 piezas**:
 
 | Pieza | Qué es | La instalas en el paso |
 |---|---|---|
-| **Python 3.10+** | El lenguaje en el que corre el servidor | 1.1 |
-| **InVEST Workbench** | La app de escritorio de InVEST. Trae `invest.exe` **y** un `micromamba.exe` que usamos para lo demás | 1.2 |
+| **InVEST Workbench** | La app de escritorio de InVEST. Trae `invest.exe` **y** un `micromamba.exe` que usamos para todo lo demás | 1.1 |
 | **Este repo** (`invest-mcp`) | El servidor | 2 |
+| **Env del servidor** (`invest-mcp` en conda, **o** un `.venv`) | Caja ligera con Python + `mcp` + `pydantic` | 3 |
 | **2 envs conda** (`invest-geo`, `invest-cal`) | Cajas aisladas con GDAL / natcap.invest. Se crean solas | 3 |
+
+**No necesitas instalar Python del sistema.** El Workbench trae `micromamba`, y el
+script lo usa para crear también el env del servidor. (Si *ya* tienes un Python
+3.10+ y lo prefieres, el script usa un `.venv` normal — tú eliges.)
 
 Nada de esto "se activa dentro de InVEST". `invest-mcp` es un programa aparte que
 **llama** a `invest.exe` por debajo.
@@ -40,24 +44,7 @@ Nada de esto "se activa dentro de InVEST". `invest-mcp` es un programa aparte qu
 
 ## 1. Instalar los requisitos
 
-### 1.1 Python 3.10 o superior
-
-1. Ve a <https://www.python.org/downloads/windows/> y descarga el instalador de
-   la última versión 3.x (3.11, 3.12 o 3.13 valen; **3.14 aún no** para los envs).
-2. Ejecuta el instalador y **marca la casilla `Add python.exe to PATH`** (abajo
-   del todo). Si no la marcas, nada funcionará desde la terminal.
-3. `Install Now`.
-4. **Cierra y vuelve a abrir** cualquier terminal que tuvieras abierta.
-5. Comprueba: abre **PowerShell** (menú Inicio → escribe `powershell`) y ejecuta:
-
-   ```powershell
-   python --version
-   ```
-
-   Debe responder `Python 3.11.x` (o 3.12 / 3.13). Si dice *"no se reconoce…"*,
-   repite el instalador y asegúrate de la casilla PATH, o reinicia el equipo.
-
-### 1.2 InVEST Workbench
+### 1.1 InVEST Workbench (esto es todo lo obligatorio)
 
 1. Ve a <https://naturalcapitalproject.stanford.edu/software/invest> →
    **Download**. Elige el instalador de Windows (p. ej. *InVEST 3.20.1 Workbench*).
@@ -84,6 +71,17 @@ Nada de esto "se activa dentro de InVEST". `invest-mcp` es un programa aparte qu
 > `conda create -n invest -c conda-forge natcap.invest` y añade su carpeta al
 > PATH. Pero entonces no tienes el micromamba bundled y necesitarás tu propio
 > conda/mamba para el paso 3. Con el Workbench es más simple.
+
+### 1.2 (opcional) Python del sistema
+
+**No hace falta.** El script del paso 3 crea el env del servidor con el
+`micromamba` del Workbench.
+
+Solo si *prefieres* un `.venv` clásico: instala Python 3.10–3.13 desde
+<https://www.python.org/downloads/windows/> **marcando `Add python.exe to PATH`**,
+abre una terminal nueva y comprueba con `python --version`. (Python **3.14** aún
+no sirve para los envs geoespaciales.) El script lo detecta solo y usa `.venv`;
+para forzarlo pásale `-Venv`.
 
 ### 1.3 Git (recomendado) — o descarga el ZIP
 
@@ -140,11 +138,13 @@ powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1
 
 Eso hace, en orden, **todo el paso 4 y 5 de golpe**:
 
-1. busca tu Python ≥ 3.10,
-2. crea el entorno `.venv` e instala `invest-mcp` dentro,
-3. **crea los envs conda `invest-geo` y `invest-cal`** (usa el micromamba del
-   Workbench). ⏳ **Esta parte tarda 10–25 min** — son descargas de GDAL y
-   `natcap.invest`. Es normal que parezca parado; déjalo.
+1. **elige dónde vive el servidor**: si hay un Python 3.10+ del sistema usa un
+   `.venv`; si no, crea un env conda `invest-mcp` con el micromamba del Workbench
+   (**cero Python que instalar**),
+2. instala `invest-mcp` dentro,
+3. **crea los envs conda `invest-geo` y `invest-cal`** (mismo micromamba).
+   ⏳ **Esta parte tarda 10–25 min** — son descargas de GDAL y `natcap.invest`.
+   Es normal que parezca parado; déjalo.
 4. corre `invest-mcp doctor` para verificar,
 5. imprime los comandos/JSON para registrar el server en tu cliente.
 
@@ -152,6 +152,8 @@ Eso hace, en orden, **todo el paso 4 y 5 de golpe**:
 
 | Comando | Para qué |
 |---|---|
+| `... bootstrap.ps1 -CondaServer` | Fuerza el env conda para el servidor aunque tengas Python del sistema (lo que quieres si "no te gusta el Python puto"). |
+| `... bootstrap.ps1 -Venv` | Fuerza un `.venv` (necesita Python 3.10+ en el PATH). |
 | `... bootstrap.ps1 -SkipEnvs` | Solo el servidor. Podrás explorar/validar/**ejecutar** modelos, pero no `preflight_geo` ni `run_calibration`. Rápido (~1 min). |
 | `... bootstrap.ps1 -GeoOnly` | Servidor + solo `invest-geo` (chequeos y resúmenes, sin calibración). |
 | `... bootstrap.ps1 -CalOnly` | Servidor + solo `invest-cal` (calibración). |
@@ -169,30 +171,35 @@ falla, sigue con el paso 4 a mano para ver dónde.
 
 ## 4. La vía manual (si el script falla, o para entender qué pasa)
 
-Todo desde la carpeta del repo, en PowerShell.
+Todo desde la carpeta del repo, en PowerShell. **Elige UNA de 4.1a / 4.1b.**
 
-### 4.1 Crear el `.venv` (entorno Python aislado del servidor)
+### 4.1a Env del servidor **con conda/micromamba** (sin Python del sistema)
+
+```powershell
+# usa el micromamba del Workbench (ajusta la versión en la ruta si hace falta)
+$MM = "C:\Program Files\InVEST 3.20.1 Workbench\resources\micromamba.exe"
+& $MM create -y -f environment-server.yml
+$PY = (& $MM run -n invest-mcp python -c "import sys;print(sys.executable)").Trim()
+$PY    # -> C:\Users\tu\AppData\Roaming\mamba\envs\invest-mcp\python.exe
+```
+
+### 4.1b Env del servidor **con un `.venv`** (si ya tienes Python 3.10+)
 
 ```powershell
 python -m venv .venv
+$PY = ".\.venv\Scripts\python.exe"
 ```
 
-Aparece una carpeta `.venv\`. **No la borres.** Contiene su propio `python.exe`
-en `.venv\Scripts\python.exe`; usaremos esa ruta para todo.
-
-### 4.2 Instalar `invest-mcp` en el `.venv`
+### 4.2 Instalar `invest-mcp` en ese env
 
 ```powershell
-.\.venv\Scripts\python -m pip install --upgrade pip
-.\.venv\Scripts\python -m pip install -e .
+& $PY -m pip install --upgrade pip
+& $PY -m pip install -e .
+& $PY -m invest_mcp --version
 ```
 
-El `-e` (editable) hace que, si luego actualizas el repo con `git pull`, los
-cambios se recojan sin reinstalar. Ahora ya tienes el comando `invest-mcp`:
-
-```powershell
-.\.venv\Scripts\python -m invest_mcp --version
-```
+El `-e` (editable) hace que un futuro `git pull` se recoja sin reinstalar.
+**Guarda la ruta `$PY`** — la usarás en 4.3, 4.4 y en el paso 5.
 
 ### 4.3 Crear los envs conda (`invest-geo` + `invest-cal`)
 
@@ -201,9 +208,9 @@ Windows** de forma limpia, así que van en envs conda aparte. Un solo comando lo
 construye desde los `environment-*.yml` del repo:
 
 ```powershell
-.\.venv\Scripts\python -m invest_mcp setup            # los dos
-.\.venv\Scripts\python -m invest_mcp setup --geo      # solo invest-geo
-.\.venv\Scripts\python -m invest_mcp setup --cal      # solo invest-cal
+& $PY -m invest_mcp setup            # los dos
+& $PY -m invest_mcp setup --geo      # solo invest-geo
+& $PY -m invest_mcp setup --cal      # solo invest-cal
 ```
 
 **Qué usa para construirlos**, en este orden: la variable `CONDA_EXE` / `MAMBA_EXE`
@@ -230,7 +237,7 @@ refresca el `pip install -e .` dentro. Re-ejecútalo sin miedo tras un `git pull
 ### 4.4 Verificar con `doctor`
 
 ```powershell
-.\.venv\Scripts\python -m invest_mcp doctor
+& $PY -m invest_mcp doctor
 ```
 
 Salida ideal:
@@ -258,12 +265,16 @@ all good
 
 ## 5. Registrar el servidor en tu cliente
 
-Primero, ten a mano el bloque que imprime:
+Primero, ten a mano el bloque que imprime (usa tu `$PY`, o
+`.\.venv\Scripts\python` si hiciste `.venv`):
 
 ```powershell
-.\.venv\Scripts\python -m invest_mcp mcp-config                    # JSON genérico
-.\.venv\Scripts\python -m invest_mcp mcp-config --client claude-code   # comando de Claude Code
+& $PY -m invest_mcp mcp-config                     # JSON genérico
+& $PY -m invest_mcp mcp-config --client claude-code   # comando de Claude Code
 ```
+
+El `command` del bloque será tu `$PY` — si es el env conda, algo como
+`C:\Users\tu\AppData\Roaming\mamba\envs\invest-mcp\python.exe`.
 
 ### 5.a Claude Desktop
 
@@ -283,7 +294,7 @@ Primero, ten a mano el bloque que imprime:
    {
      "mcpServers": {
        "invest": {
-         "command": "C:\\Users\\tu\\invest-mcp\\.venv\\Scripts\\python.exe",
+         "command": "C:\\Users\\tu\\AppData\\Roaming\\mamba\\envs\\invest-mcp\\python.exe",
          "args": ["-m", "invest_mcp"],
          "env": {
            "INVEST_MCP_INVEST_EXE": "C:\\Program Files\\InVEST 3.20.1 Workbench\\resources\\invest\\invest.exe"
@@ -293,7 +304,9 @@ Primero, ten a mano el bloque que imprime:
    }
    ```
 
-   Ojo con las **barras dobles** `\\` en las rutas (es JSON).
+   El `command` es tu `$PY` (env conda como arriba, o
+   `...\invest-mcp\.venv\Scripts\python.exe` si hiciste `.venv`). Ojo con las
+   **barras dobles** `\\` en las rutas (es JSON) — `mcp-config` ya las pone.
 4. Guarda. Abre Claude Desktop.
 5. En una conversación nueva, el icono de herramientas (🔌 / martillo) debe listar
    el servidor **invest**. Escribe: *"lista los modelos de InVEST"*.
@@ -342,7 +355,8 @@ claude mcp add invest --scope user --env "INVEST_MCP_INVEST_EXE=C:\Program Files
 | Cosa | Ruta por defecto |
 |---|---|
 | Motor InVEST | `C:\Program Files\InVEST <ver> Workbench\resources\invest\invest.exe` |
-| Servidor (`.venv`) | `<repo>\.venv\Scripts\python.exe` |
+| Servidor — env conda | `%APPDATA%\mamba\envs\invest-mcp\python.exe` (si usaste `-CondaServer` / no había Python) |
+| Servidor — `.venv` | `<repo>\.venv\Scripts\python.exe` (si usaste `-Venv` / había Python del sistema) |
 | Env geoespacial | `%APPDATA%\mamba\envs\invest-geo` **o** `%USERPROFILE%\.conda\envs\invest-geo` |
 | Env calibración | `…\envs\invest-cal` (mismo esquema) |
 | Jobs, logs, provenance | `%USERPROFILE%\invest-mcp-data\` |
@@ -378,11 +392,11 @@ En Claude Desktop van en el bloque `"env": { … }` del JSON.
 ```powershell
 cd <repo>
 git pull
-powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1        # re-hace .venv + envs (idempotente)
-# o a mano:
-.\.venv\Scripts\python -m pip install -e .
-.\.venv\Scripts\python -m invest_mcp setup
-.\.venv\Scripts\python -m invest_mcp doctor
+powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1   # re-hace el env + los envs (idempotente)
+# o a mano (con la ruta $PY de tu env):
+& $PY -m pip install -e .
+& $PY -m invest_mcp setup
+& $PY -m invest_mcp doctor
 ```
 
 Tras actualizar, **reinicia tu cliente** (Claude Desktop / Claude Code) para que
@@ -394,7 +408,7 @@ recargue el servidor.
 
 | Síntoma | Causa / arreglo |
 |---|---|
-| `python` *"no se reconoce…"* | No marcaste *Add to PATH* al instalar Python. Reinstala con esa casilla, abre una terminal nueva. |
+| `python` *"no se reconoce…"* | No necesitas Python: re-lanza el script con `-CondaServer` y usa el micromamba del Workbench. (O instala Python marcando *Add to PATH* y abre terminal nueva.) |
 | `bootstrap.ps1` *"la ejecución de scripts está deshabilitada"* | Lánzalo con `powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1`. No cambia nada permanente. |
 | `doctor` → `invest [FAIL]` | No hay Workbench. Instálalo, o define `INVEST_MCP_INVEST_EXE` con la ruta a un `invest.exe` / `invest`. |
 | `setup` → *"No conda/mamba/micromamba found"* | Instala el InVEST Workbench (trae micromamba) o [Miniforge](https://github.com/conda-forge/miniforge), o pasa `--conda <ruta a micromamba.exe>`. |
@@ -403,7 +417,8 @@ recargue el servidor.
 | Los envs tardan muchísimo / parece colgado | Normal: GDAL + natcap.invest son cientos de MB. Déjalo 20–30 min. Si de verdad se cuelga, `Ctrl+C` y re-ejecuta `setup` (retoma). |
 | El antivirus bloquea `micromamba.exe` | Añade una excepción para `C:\Program Files\InVEST … \resources\micromamba.exe` y para `%APPDATA%\mamba`. |
 | Claude Desktop no muestra el servidor | ¿Fusionaste bien el JSON (una sola clave `mcpServers`)? ¿Barras dobles `\\` en las rutas? ¿Cerraste y reabriste la app del todo? Mira los logs en `%APPDATA%\Claude\logs\`. |
-| Claude Code: `claude mcp list` → `failed` | Ejecuta a mano `<.venv>\Scripts\python.exe -m invest_mcp` — si peta, el error sale ahí. Suele ser una ruta mal escrita en el `mcp add`. |
+| Claude Code: `claude mcp list` → `failed` | Ejecuta a mano `<tu-$PY> -m invest_mcp` — si peta, el error sale ahí. Suele ser una ruta mal escrita en el `mcp add`. |
+| Quiero pasar del `.venv` al env conda (o al revés) | Vuelve a correr el script con `-CondaServer` (o `-Venv`) y re-registra en el cliente con el nuevo `mcp-config`. Borra el que no uses: `micromamba env remove -n invest-mcp` o borra la carpeta `.venv`. |
 | Ruta de inputs *"outside every allowed folder"* | Usa la tool `allow_input_dir("C:\\ruta")` en la conversación, o añade la carpeta a `INVEST_MCP_ALLOWED_INPUT_DIRS` y reinicia. |
 | El `.jpg` de dotty plots de calibración no aparece | Conocido: algunos builds de matplotlib en conda crashean al guardar PNG en esta clase de máquina. El `FIGURES/dotty_data_<MODELO>.json` (datos crudos) siempre se escribe; el run no se ve afectado. |
 | `invest --help` peta con `UnicodeEncodeError` si lo lanzas tú | Es un bug del `invest.exe` bundled con consola cp1252. `invest-mcp` ya lo sortea (fuerza UTF-8); no lo llames tú directamente. |
@@ -413,15 +428,16 @@ recargue el servidor.
 ## Resumen de un vistazo
 
 ```powershell
-# 1-2. instala Python 3.10+ (con PATH) y el InVEST Workbench; clona el repo
+# 1-2. instala SOLO el InVEST Workbench; clona el repo
 git clone https://github.com/nogales02/invest-mcp
 cd invest-mcp
 
-# 3. una línea lo monta todo (~10-25 min por los envs conda)
-powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1
+# 3. una línea lo monta todo (~10-25 min por los envs conda).
+#    Sin Python del sistema -> añade -CondaServer (usa el micromamba del Workbench).
+powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1 -CondaServer
 
-# 4. registra en tu cliente con lo que imprime:
-.\.venv\Scripts\python -m invest_mcp mcp-config --client claude-code
+# 4. el script termina imprimiendo el comando de registro para tu cliente:
+#    cópialo y ejecútalo (Claude Code), o pega el JSON en la config (Claude Desktop).
 
 # 5. reinicia el cliente y prueba: "lista los modelos de InVEST"
 ```

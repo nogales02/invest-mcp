@@ -115,7 +115,8 @@ src/invest_mcp/
   provenance.py      provenance.json por run: versiones + sha256 de cada input
   tools.py           las 17 tools MCP + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
-scripts/             bootstrap.ps1 (Windows) / bootstrap.sh (POSIX): venv + pip + setup + doctor + mcp-config
+environment-server.yml  env conda "invest-mcp" (python+pip) para el servidor sin Python del sistema
+scripts/             bootstrap.ps1 (Windows) / bootstrap.sh (POSIX): elige server env (.venv o conda invest-mcp) + pip + setup + doctor + mcp-config
 docs/                INSTALACION-PASO-A-PASO.md  guía "para dummies" (ES): de cero a Claude conectado
 INSTALL.md           referencia terse: prereqs + snippets de config por cliente + seguridad
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
@@ -295,9 +296,12 @@ Convenciones:
 ## 8. Comandos
 
 ```powershell
-# instalación de cero (o re-hacerla): venv + pip + envs conda + doctor + mcp-config
+# instalación de cero (o re-hacerla): server env + pip + envs conda + doctor + mcp-config
 powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1
-#   flags: -SkipEnvs -GeoOnly -CalOnly -Conda <ruta> -Http  ;  POSIX: scripts/bootstrap.sh
+#   server env: auto -> .venv si hay Python >=3.10 del sistema, si no un env conda
+#   "invest-mcp" (environment-server.yml) con el micromamba del Workbench. Fuerza
+#   con -CondaServer / -Venv.  flags: -SkipEnvs -GeoOnly -CalOnly -Conda <ruta> -Http
+#   POSIX: scripts/bootstrap.sh (--conda-server / --venv / --skip-envs / ...)
 #   guía "para dummies" (ES): docs\INSTALACION-PASO-A-PASO.md
 
 # instalar / actualizar el servidor

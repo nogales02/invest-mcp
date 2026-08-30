@@ -24,11 +24,13 @@ with your client.
 | For | You need |
 |-----|----------|
 | Model browse / validate / **run** | The **InVEST Workbench** installed (any recent version), or an `invest` on `PATH` (e.g. conda-forge `natcap.invest` on Linux/macOS). |
-| `preflight_geo` | A `conda` / `mamba` / `micromamba` (Miniforge recommended). |
-| `run_calibration` | Same conda tool. |
+| The server env | Either a system **Python ≥ 3.10** (→ `.venv`) **or** a `conda`/`mamba`/`micromamba` (→ a conda `invest-mcp` env; the Workbench bundles a micromamba, so this needs nothing extra). |
+| `preflight_geo` / `run_calibration` | A `conda` / `mamba` / `micromamba` (Miniforge, or the Workbench's bundled micromamba). |
 | `--transport streamable-http` | `pip install "invest-mcp[http] @ git+…"` (adds uvicorn). |
 
-Python ≥ 3.10 for the server itself.
+You do **not** need to install Python yourself if you have any conda/micromamba
+(the Workbench's counts): `scripts/bootstrap.ps1` / `.sh` will put the server in a
+conda `invest-mcp` env built from `environment-server.yml`.
 
 ---
 
@@ -41,7 +43,9 @@ git clone https://github.com/nogales02/invest-mcp
 cd invest-mcp
 powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1   # Windows
 ./scripts/bootstrap.sh                                           # POSIX
-#   flags: -SkipEnvs / --skip-envs, -GeoOnly, -CalOnly, -Conda <path>, -Http
+#   server env: auto (.venv if system Python >=3.10, else a conda invest-mcp env)
+#   flags: -CondaServer / --conda-server, -Venv / --venv, -SkipEnvs / --skip-envs,
+#          -GeoOnly, -CalOnly, -Conda <path>, -Http
 ```
 
 **Option A — pip from the repo** (browse/validate/run only; `setup` won't work
@@ -51,17 +55,26 @@ without the repo's `environment-*.yml`):
 pip install "git+https://github.com/nogales02/invest-mcp"
 ```
 
-**Option B — clone by hand (lets you edit / update with `git pull`):**
+**Option B — clone, server in a `.venv`** (needs system Python ≥ 3.10):
 
 ```bash
-git clone https://github.com/nogales02/invest-mcp
-cd invest-mcp
+git clone https://github.com/nogales02/invest-mcp && cd invest-mcp
 python -m venv .venv
-# Windows:  .venv\Scripts\pip install -e .
-# POSIX:    .venv/bin/pip install -e .
+.venv\Scripts\pip install -e .      # POSIX: .venv/bin/pip install -e .
 ```
 
-Any of these gives you an `invest-mcp` command and `python -m invest_mcp`.
+**Option C — clone, server in a conda env** (no system Python):
+
+```bash
+git clone https://github.com/nogales02/invest-mcp && cd invest-mcp
+micromamba create -f environment-server.yml -y        # or conda env create -f …
+micromamba run -n invest-mcp pip install -e .
+#   the env's python is at  %APPDATA%\mamba\envs\invest-mcp\python.exe (micromamba)
+#   or  <conda-root>\envs\invest-mcp\...  — `mcp-config` prints the right path
+```
+
+Any of these gives you an `invest-mcp` command and `python -m invest_mcp` inside
+that env.
 
 ---
 

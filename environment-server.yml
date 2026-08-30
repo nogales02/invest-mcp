@@ -1,0 +1,21 @@
+# invest-mcp -- the server env itself (the light one).
+#
+# Only needed if you'd rather NOT install a system Python: this env replaces the
+# `python -m venv .venv` step. It carries just Python + pip; `invest-mcp` and its
+# three deps (mcp, pydantic, pydantic-settings) go in afterwards with:
+#     <env>/python -m pip install -e .
+#
+# `scripts/bootstrap.ps1` / `bootstrap.sh` build this automatically when no
+# system Python >= 3.10 is found (or when you pass -CondaServer / --conda-server),
+# using the same conda/mamba/micromamba they use for invest-geo / invest-cal
+# (the InVEST Workbench's bundled micromamba is enough).
+#
+#   micromamba create -f environment-server.yml -y
+#   micromamba run -n invest-mcp python -m pip install -e .
+name: invest-mcp
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pip
