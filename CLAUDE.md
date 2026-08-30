@@ -20,6 +20,11 @@ recortar, alinear rásters, construir tablas biofísicas) y de procedimiento
 `natcap.invest`. El punto de integración con el Workbench es el formato **datastack**
 (`.invest.json`), que este servidor lee y escribe.
 
+**Publicado (2026-08-30):** repo git `github.com/nogales02/invest-mcp` (rama `main`),
+sin PyPI. Es **cliente-agnóstico**: cualquier cliente MCP sirve (Claude Desktop/Code,
+Cline, Continue, LibreChat, `mcphost` para Ollama, OpenAI Agents SDK…). No hay nada
+que "activar" dentro de InVEST. Ver `INSTALL.md`.
+
 ---
 
 ## 2. Decisión de arquitectura central (v0.1)
@@ -28,18 +33,19 @@ El servidor es un **wrapper de subproceso puro** sobre el `invest.exe` que trae
 instalado el **InVEST Workbench**. **No importa `natcap.invest`.**
 
 Motivos:
-- No hay env de conda configurado en la máquina (sí está `C:\ProgramData\miniconda3`
-  pero sin ambiente creado).
 - El Python del sistema es **3.14** y no hay wheels de GDAL para 3.14/Windows, así
-  que `pip install natcap.invest` es **imposible** (pin `gdal==3.10.*` sin wheel).
+  que `pip install natcap.invest` en el `.venv` es **imposible** (pin `gdal==3.10.*`
+  sin wheel).
 - El aislamiento por subproceso contiene segfaults de GDAL y hace que cancelar un
   run sea un kill real.
+- Lo pesado (GDAL, `natcap.invest`, `spotpy`) vive en envs conda **sidecar**
+  (`invest-geo`, `invest-cal`), invocadas por subproceso — el `.venv` sigue ligero.
 
 Un proceso del SO por run, supervisado por un hilo daemon + un `BoundedSemaphore`
 para limitar concurrencia. Los jobs persisten en
 `%USERPROFILE%\invest-mcp-data\jobs\<job_id>\`.
 
-### Hechos del entorno (verificados 2026-08-29)
+### Hechos del entorno (verificados 2026-08-30)
 - `invest.exe`: `C:\Program Files\InVEST 3.20.1 Workbench\resources\invest\invest.exe` (v3.20.1)
 - SDK: **`mcp` 2.1.1** — OJO: `FastMCP` se renombró a `MCPServer`
   (`from mcp.server.mcpserver import MCPServer`). Los decoradores (`.tool()`,
@@ -55,11 +61,11 @@ para limitar concurrencia. Los jobs persisten en
   --override-channels`, y `nodefaults` en environment-geo.yml / environment-cal.yml).
 - **Env de calibración**: `invest-cal` (conda-forge, Python 3.12) en
   `C:\Users\Nogales\.conda\envs\invest-cal`. Trae **natcap.invest 3.20.1**,
-  gdal 3.12, geopandas, rasterstats, matplotlib-base, pandas + `spotpy` (pip) +
-  `invest_mcp` y `invest-calibration-assistant` (pip -e, apunta a
+  gdal 3.12, geopandas, rasterstats, matplotlib-base, pandas, **numpy pin `<2.3`** +
+  `spotpy` (pip) + `invest_mcp` y `invest-calibration-assistant` (pip -e, apunta a
   `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`). No se pudo
   añadir natcap.invest a `invest-geo` (choca el pin `gdal==3.10.*`), de ahí el
-  env aparte.
+  env aparte. Ver `environment-cal.yml`.
 - **matplotlib está roto en las envs conda de esta máquina** (Agg crashea en
   `savefig` con `0xc06d007f`, un lío de DLLs nativas del sistema, no del código).
   Por eso el core: (a) siempre escribe `FIGURES/dotty_data_<MODELO>.json` (numpy
@@ -77,7 +83,9 @@ para limitar concurrencia. Los jobs persisten en
 
 ```
 src/invest_mcp/
-  config.py          Settings (env INVEST_MCP_*) + autodetección de invest.exe
+  cli.py             `invest-mcp` : subcomandos serve / doctor / setup / mcp-config
+  server.py          build_server() -> MCPServer ; run() honra transport/host/port
+  config.py          Settings (env INVEST_MCP_*) + autodetección invest.exe / envs (POSIX-safe)
   invest_cli.py      subproceso: version / list / getspec / validate  (fuerza UTF-8)
   models/
     registry.py      lista modelos, cachea specs (lru_cache), resuelve alias
@@ -96,17 +104,25 @@ src/invest_mcp/
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
   tools.py           las 16 tools MCP + register(server)
-  server.py          build_server() -> MCPServer; main() corre stdio
-tests/               test_spec_translate.py, test_sandbox.py, test_geo_payload.py  (13 tests)
+environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
+INSTALL.md           guía completa + snippets de config por cliente
+tests/               test_spec_translate, test_sandbox, test_geo_payload,
+                     test_calibration_tools  (16 tests)
 ```
 
 `geo/preflight.py` **solo importa stdlib al cargar**; rasterio/pyproj/shapely/
 pyogrio se importan dentro de las funciones (para que el env `.venv` pueda
 importar el módulo sin GDAL, aunque nunca lo ejecuta).
 
+**Motor de calibración** = repo aparte `github.com/N4W-Facility/Invest_Plugin_Calibration`,
+rama `refactor/shared-core` (pusheada), paquete `invest_calibration_assistant.core`
+(`config`/`engine`/`models/{awy,swy,sdr,ndr}`/`biotable`/`metrics`/`zonal`/`selection`/
+`plots`+`_plot_worker`). Compartido con el plugin del Workbench del usuario. Clon local
+en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
+
 ---
 
-## 4. Tool surface (v0.1)
+## 4. Tool surface (16 tools)
 
 | Tool | Para qué |
 |---|---|
@@ -124,7 +140,7 @@ importar el módulo sin GDAL, aunque nunca lo ejecuta).
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
 | `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
-| `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, diagnostics. |
+| `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, `diagnostics` (sensibilidad Spearman por parámetro), `dotty_data` (rutas a JSON ploteables). |
 | `cancel_calibration_job(job_id)` | Mata un job de calibración. |
 
 Convenciones:
@@ -139,55 +155,69 @@ Convenciones:
 ## 5. Estado actual
 
 ### Funciona / verificado
-- Autodetección de `invest.exe` y del env `invest-geo`; `invest_env`, `list_invest_models`.
-- `describe_invest_model('carbon')` → schema correcto.
+- Autodetección de `invest.exe` + envs `invest-geo` / `invest-cal`; `invest_env`,
+  `list_invest_models`, `describe_invest_model('carbon')` → schema correcto.
 - `validate_invest_args` → required + sandbox + `invest validate` + preflight geo.
-- **Preflight geoespacial** (`preflight_geo`) probado end-to-end (.venv → subproceso
-  → env invest-geo) con datos sintéticos: detecta `crs_not_projected`,
-  `crs_units_not_meters`, `crs_mismatch` (error si `different_projections_ok=False`),
-  `no_spatial_overlap`, `nodata_undefined`, `pixel_size_mismatch`. Escenario limpio → `ok: True`.
-- **Ciclo de job completo**: submit → subproceso → estado terminal → log → `provenance.json`.
-  Probado con un run que falla a propósito.
-- **Calibración (SDR)**: probado end-to-end (.venv → subproceso → env invest-cal →
-  `invest_calibration_assistant.core.calibrate`) contra `Dummy_InVEST`: 10 iter LHS de
-  InVEST SDR + run best + diagnostics, ~18s. El motor es el **núcleo compartido**
-  extraído del plugin del Workbench del usuario (repo `Invest_Plugin_Calibration`,
-  rama `refactor/shared-core`, patch en scratchpad `shared-core.patch`). Solo SDR
-  cableado; AWY/SWY/NDR_N/NDR_P siguen en la ruta legacy del plugin hasta portarlos.
-- `wait_seconds` bloquea hasta que el job está *finalizado* (provenance escrita),
-  no solo hasta que cambia el estado (se arregló una race con `threading.Event`).
-- 13 tests en verde.
-- Registrado y "Connected" en Claude Code.
+- **Preflight geoespacial** (`preflight_geo`) end-to-end (.venv → subproceso → env
+  invest-geo) con datos sintéticos: `crs_not_projected`, `crs_units_not_meters`,
+  `crs_mismatch`, `no_spatial_overlap`, `nodata_undefined`, `pixel_size_mismatch`;
+  escenario limpio → `ok: True`.
+- **Ciclo de job completo**: submit → subproceso → estado terminal → log →
+  `provenance.json` (probado con un run que falla a propósito). `wait_seconds` usa
+  `threading.Event`: bloquea hasta *finalizado* (provenance escrita), no solo hasta
+  que cambia el estado.
+- **Calibración — los 5 modelos** (AWY/SWY/SDR/NDR_N/NDR_P) end-to-end (.venv →
+  subproceso → env invest-cal → `invest_calibration_assistant.core.calibrate`)
+  contra el dataset real `Dummy_InVEST`, 10–40 iter LHS + run best:
+  SDR 40 iter → 5.6% err · AWY 30 → 2% · SWY → ~3% · NDR_P cerca · NDR_N flojo
+  (búsqueda corta). Devuelve `best_parameters`, `best_objective`, `obs_vs_sim`,
+  `diagnostics` (Spearman por param), `warnings` (caps de factores),
+  `dotty_data_<MODELO>.json`. JPG de dotty plots se rinde en subproceso aislado
+  (matplotlib roto en esta máquina → solo se pierde el JPG). Motor = **núcleo
+  compartido** extraído del plugin del Workbench del usuario.
+- **CLI** `invest-mcp {serve,doctor,setup,mcp-config}`. `doctor` en verde en esta
+  máquina (invest.exe v3.20.1 + ambos envs + data root).
+- **Distribución lista**: `github.com/nogales02/invest-mcp` (main) pusheado;
+  `N4W-Facility/Invest_Plugin_Calibration` rama `refactor/shared-core` pusheada.
+  Transporte dual (stdio + streamable-http). `INSTALL.md` con snippets por cliente.
+- 16 tests en verde. Registrado y "Connected" en Claude Code.
 
 ### Pendiente
-- **Run exitoso de punta a punta**: no hay sample data de InVEST en la máquina.
-  Falta probar con un LULC + tabla de carbon pools reales.
-- Resources y prompts MCP (v0.1 solo tiene tools).
+- **Run exitoso de un modelo normal** (p.ej. carbon) de punta a punta — no hay
+  sample data del modelo simple en la máquina (único hueco de verificación).
+- Resources y prompts MCP (por ahora solo tools).
+- `conda-lock` para solves 100% reproducibles entre plataformas.
+- Merge del PR del plugin a `main` → cambiar `INVEST_MCP_CAL_PLUGIN_SPEC` /
+  `environment-cal.yml` de `@refactor/shared-core` a `@main`.
 
 ---
 
 ## 6. Roadmap (capas siguientes, en orden sugerido)
 
-1. ~~Env de conda con GDAL~~ **HECHO** — env `invest-geo`.
+1. ~~Env de conda con GDAL~~ **HECHO** — envs `invest-geo` + `invest-cal`.
 2. ~~Preflight geoespacial~~ **HECHO** — `geo/preflight.py` + tool `preflight_geo`.
-   Pendiente de afinar: umbrales (`_PIXEL_RATIO_WARN`), y probarlo con datos reales
-   de un caso de estudio (hasta ahora solo sintéticos).
-3. **`summarize_results`**: zonal stats de los rásters de salida sobre un AOI +
-   resumen en lenguaje natural + PNG de preview + sidecar JSON de estadísticas
-   (para que la IA "vea" el resultado).
-4. **`compare_scenarios`**: correr baseline vs alternativa, diferencia de salidas.
-   Es el propósito de InVEST (Tradeoffs).
-5. **Rutinas de datos deterministas** (tools): `project.scaffold`, `geo.fetch_dem`,
+   Pendiente de afinar: umbrales (`_PIXEL_RATIO_WARN`).
+3. ~~Calibración de modelos hidrológicos~~ **HECHO** — 5 modelos, núcleo compartido,
+   dotty plots (JSON + JPG aislado), tools `run_calibration` / `get_calibration_job`.
+4. ~~Empaquetar para distribución git~~ **HECHO** — CLI, transporte dual, `INSTALL.md`,
+   ambos repos pusheados.
+5. **Run exitoso de carbon** con sample data real — cerrar el hueco de verificación.
+6. **`summarize_results`**: zonal stats de los rásters de salida sobre un AOI +
+   resumen en lenguaje natural + PNG de preview + sidecar JSON de estadísticas.
+7. **`compare_scenarios`**: baseline vs alternativa, diferencia de salidas (el
+   propósito de InVEST — Tradeoffs).
+8. **Rutinas de datos deterministas** (tools): `project.scaffold`, `geo.fetch_dem`,
    `geo.fetch_landcover`, `geo.reproject`, `geo.clip_to_aoi`, `geo.align_stack`,
-   `tables.from_template`. Idempotentes, con hash de contenido, log. Van en el env
-   `invest-geo` (reproyección/recorte con rasterio/pygeoprocessing), invocadas por
-   subproceso igual que `preflight` — el patrón ya está montado en `geo/client.py`.
-6. **Playbooks** (prompts MCP): "preparar+correr NDR", "preparar+correr Carbon",
+   `tables.from_template`. Van en `invest-geo`, invocadas por subproceso igual que
+   `preflight` — patrón ya montado en `geo/client.py`.
+9. **Playbooks** (prompts MCP): "preparar+correr NDR", "preparar+correr Carbon",
    "comparar dos escenarios de uso de suelo".
-7. **Base de conocimiento** (resources): catálogo de fuentes de datos por variable,
-   convención de carpetas, unidades, cheat-sheets por modelo.
-8. **Cache content-addressed** por hash de inputs; **snapshots de JSON Schema** en
-   el repo, diff en CI para detectar cambios breaking de spec al subir versión de InVEST.
+10. **Base de conocimiento** (resources): catálogo de fuentes de datos por variable,
+    convención de carpetas, unidades, cheat-sheets por modelo.
+11. **Cache content-addressed** por hash de inputs; **snapshots de JSON Schema** +
+    diff en CI para detectar cambios breaking al subir versión de InVEST.
+12. **conda-lock** (win-64 / linux-64 / osx-arm64) + imagen Docker (Linux, sin
+    dependencia del Workbench, `invest` de conda-forge).
 
 ### Convención de "proyecto InVEST" (a definir antes de las rutinas de datos)
 ```
@@ -262,13 +292,16 @@ Tras cambiar tools, **reiniciar Claude Code** para que recargue el servidor MCP.
 
 | Variable | Default | |
 |---|---|---|
-| `INVEST_MCP_INVEST_EXE` | autodetect Workbench | ruta a invest.exe |
-| `INVEST_MCP_GEO_PYTHON` | autodetect `~/.conda/envs/invest-geo` | python.exe del env geo |
+| `INVEST_MCP_INVEST_EXE` | autodetect Workbench (o `invest` en PATH) | ruta a invest.exe |
+| `INVEST_MCP_GEO_PYTHON` | autodetect `~/.conda/envs/invest-geo` | python del env geo |
+| `INVEST_MCP_CAL_PYTHON` | autodetect `~/.conda/envs/invest-cal` | python del env calibración |
 | `INVEST_MCP_DATA_ROOT` | `%USERPROFILE%\invest-mcp-data` | jobs/logs |
-| `INVEST_MCP_ALLOWED_INPUT_DIRS` | — | carpetas extra de inputs (`;`-sep) |
+| `INVEST_MCP_ALLOWED_INPUT_DIRS` | — | carpetas extra de inputs (`;` win / `:` posix) |
 | `INVEST_MCP_MAX_CONCURRENT_JOBS` | 2 | runs en paralelo |
 | `INVEST_MCP_INVEST_TIMEOUT_SECONDS` | 21600 | timeout por run |
 | `INVEST_MCP_LOCALE` | — | locale InVEST (es/en/zh) |
+| `INVEST_MCP_TRANSPORT` / `_HOST` / `_PORT` | `stdio` / `127.0.0.1` / `8000` | HTTP necesita extra `[http]` |
+| `INVEST_MCP_CAL_PLUGIN_SPEC` | `... @ git+...@refactor/shared-core` | spec pip del núcleo de calibración (usado por `setup --cal`) |
 
 Siempre permitidas para leer inputs: `DATA_ROOT` y el cwd del servidor.
 
@@ -279,6 +312,7 @@ Siempre permitidas para leer inputs: `DATA_ROOT` y el cwd del servidor.
 - Type hints en todo; `from __future__ import annotations`.
 - Docstrings de módulo que expliquen el "por qué", no solo el "qué".
 - Sin dependencias nuevas sin discutirlo (el servidor debe seguir siendo ligero:
-  `mcp` + `pydantic`). Lo geoespacial irá en su propio env/extra.
+  `mcp` + `pydantic`). Lo geoespacial/calibración vive en sus envs conda; extras
+  opcionales en `pyproject` (`[http]` = uvicorn, `[dev]` = pytest).
 - Las tools devuelven dicts JSON-ables; errores como `{"ok": False, "error": "..."}`,
   no excepciones que crucen el límite MCP.
