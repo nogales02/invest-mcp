@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.env
+# Claude Code machine-local settings
+.claude/settings.local.json
+# local job workspaces if placed inside the repo
+_workspaces/
+invest-mcp-data/
