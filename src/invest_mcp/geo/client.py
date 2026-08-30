@@ -200,3 +200,109 @@ def run_summary(
                          f"stderr={proc.stderr[:800]!r}"}
     result["planned_rasters"] = [r["relpath"] for r in planned]
     return result
+
+
+# ---------------------------------------------------------------------------
+# scenario comparison (baseline vs alternative) -- pure planning here; the
+# raster differencing + delta stats run in invest_mcp.geo.compare inside the
+# invest-geo env.
+# ---------------------------------------------------------------------------
+def plan_comparison(
+    baseline_ws: str,
+    scenario_ws: str,
+    meta_by_relpath: dict[str, dict],
+    *,
+    include_intermediate: bool = False,
+    explicit: list[str] | None = None,
+) -> dict:
+    """Pair up output rasters that exist in *both* run workspaces (matched by
+    relative path), and list the ones present in only one."""
+    base = {r["relpath"]: r for r in plan_rasters(
+        baseline_ws, meta_by_relpath,
+        include_intermediate=include_intermediate, explicit=explicit)}
+    scen = {r["relpath"]: r for r in plan_rasters(
+        scenario_ws, meta_by_relpath,
+        include_intermediate=include_intermediate, explicit=explicit)}
+
+    pairs: list[dict] = []
+    for rel, brow in base.items():
+        srow = scen.get(rel)
+        if srow is None:
+            continue
+        meta = meta_by_relpath.get(rel, {})
+        pairs.append({
+            "relpath": rel,
+            "label": meta.get("id") or brow.get("label"),
+            "units": meta.get("units") or brow.get("units"),
+            "about": meta.get("about") or brow.get("about"),
+            "baseline_path": brow["path"],
+            "scenario_path": srow["path"],
+        })
+    return {
+        "pairs": pairs,
+        "only_in_baseline": sorted(set(base) - set(scen)),
+        "only_in_scenario": sorted(set(scen) - set(base)),
+    }
+
+
+def run_comparison(
+    baseline_ws: str,
+    scenario_ws: str,
+    model_spec: dict,
+    settings: Settings,
+    *,
+    aoi_path: str | None = None,
+    out_dir: str | None = None,
+    include_intermediate: bool = False,
+    rasters: list[str] | None = None,
+    make_preview: bool = True,
+    max_zonal_features: int = 200,
+) -> dict:
+    """Difference a baseline run's outputs against an alternative-scenario run.
+    Raises RuntimeError only if the invest-geo env itself is missing (callers
+    treat that as 'unavailable')."""
+    meta = output_meta_map(model_spec)
+    plan = plan_comparison(baseline_ws, scenario_ws, meta,
+                           include_intermediate=include_intermediate,
+                           explicit=rasters)
+    if not plan["pairs"]:
+        return {"ok": True, "pairs": [], "aoi": None, "preview": None,
+                "only_in_baseline": plan["only_in_baseline"],
+                "only_in_scenario": plan["only_in_scenario"],
+                "note": "no output rasters are present in both workspaces"}
+
+    primary = next((p["relpath"] for p in plan["pairs"]
+                    if "intermediate" not in p["relpath"]), plan["pairs"][0]["relpath"])
+    payload = {
+        "pairs": plan["pairs"],
+        "aoi_path": aoi_path,
+        "out_dir": out_dir or str(Path(scenario_ws).parent / "compare"),
+        "primary_relpath": primary,
+        "make_preview": bool(make_preview),
+        "max_zonal_features": int(max_zonal_features),
+    }
+
+    geo_python = settings.resolved_geo_python  # RuntimeError if absent
+    try:
+        proc = subprocess.run(
+            [str(geo_python), "-m", "invest_mcp.geo.compare"],
+            input=json.dumps(payload),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=geo_subprocess_env(geo_python), timeout=_SUMMARY_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"comparison exceeded {_SUMMARY_TIMEOUT_S}s"}
+
+    if proc.returncode != 0 and not proc.stdout.strip():
+        return {"ok": False,
+                "error": (proc.stderr or "compare worker exited non-zero").strip()[-2000:]}
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False,
+                "error": f"worker returned non-JSON. stdout={proc.stdout[:800]!r} "
+                         f"stderr={proc.stderr[:800]!r}"}
+    result.setdefault("only_in_baseline", plan["only_in_baseline"])
+    result.setdefault("only_in_scenario", plan["only_in_scenario"])
+    result["compared_rasters"] = [p["relpath"] for p in plan["pairs"]]
+    return result

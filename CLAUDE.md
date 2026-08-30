@@ -105,22 +105,23 @@ src/invest_mcp/
     sandbox.py       allow-list de rutas de entrada (+ allow_dir de sesión)
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
-    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary; subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
     summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
-    _preview_worker.py  (SUBPROCESO AISLADO) rinde el PNG de preview (matplotlib), best-effort
+    compare.py       (CORRE EN invest-geo) alinea escenario->baseline, ráster diferencia + delta stats + zonal + escribe compare.json
+    _preview_worker.py  (SUBPROCESO AISLADO) rinde el PNG de preview (matplotlib), best-effort; `--diverging` = RdBu_r centrado en 0 para un ráster diferencia
   calibration/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 17 tools MCP + register(server)
+  tools.py           las 18 tools MCP + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
 environment-server.yml  env conda "invest-mcp" (python+pip) para el servidor sin Python del sistema
 scripts/             bootstrap.ps1 (Windows) / bootstrap.sh (POSIX): elige server env (.venv o conda invest-mcp) + pip + setup + doctor + mcp-config
 docs/                INSTALACION-PASO-A-PASO.md  guía "para dummies" (ES): de cero a Claude conectado
 INSTALL.md           referencia terse: prereqs + snippets de config por cliente + seguridad
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
-                     test_calibration_tools, test_summarize  (21 tests)
+                     test_calibration_tools, test_summarize, test_compare  (26 tests)
 ```
 
 `geo/preflight.py` **solo importa stdlib al cargar**; rasterio/pyproj/shapely/
@@ -135,7 +136,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (17 tools)
+## 4. Tool surface (18 tools)
 
 | Tool | Para qué |
 |---|---|
@@ -152,6 +153,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `cancel_invest_job(job_id)` | Mata un run en cola o en marcha. |
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
 | `summarize_results(job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Resumen de un run terminado: stats por ráster de salida (válidos/nodata, min/max/media/std/suma, histograma 10-bins), zonal por feature sobre un AOI vectorial (reproyectado al CRS del ráster), la `raster_values_summary.csv` de InVEST si existe, un digest en lenguaje natural y un PNG de preview del ráster principal (best-effort, subproceso aislado). Escribe `<jobdir>/summary/summary.json`. Necesita el env `invest-geo`. |
+| `compare_scenarios(baseline_job_id, scenario_job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Baseline vs escenario alternativo del **mismo modelo** (el propósito de InVEST — tradeoffs). Por cada ráster de salida presente en ambos runs: alinea el escenario a la malla del baseline (reproyecta si difieren), escribe `diff_<nombre>.tif` = `escenario - baseline`, y reporta total antes/después, Δ y % de cambio, px que suben/bajan/igual, histograma de Δ, zonal de Δ por feature sobre un AOI, digest NL y un PNG de preview con colormap divergente. Escribe `<scen_jobdir>/compare_vs_<baseline_job_id>/compare.json`. Necesita el env `invest-geo`. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
 | `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
 | `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, `diagnostics` (sensibilidad Spearman por parámetro), `dotty_data` (rutas a JSON ploteables). |
@@ -216,8 +218,17 @@ Convenciones:
   preview sí renderizado** (subproceso aislado `_preview_worker`, matplotlib
   funcionó aquí; si crashea solo se pierde el JPG). Sidecar
   `<jobdir>/summary/summary.json`.
-- 21 tests en verde (nuevo `test_summarize`: planificación de rásters, pura).
-  Registrado y "Connected" en Claude Code.
+- **`compare_scenarios`** end-to-end (2026-08-30, .venv → subproceso → invest-geo)
+  sobre Carbon: baseline (`carbon-20260830T103940-174b40`, LULC original) vs
+  escenario de deforestación (clase 10 → 30, 1 717 px reclasados con numpy).
+  Δ = **-130 285.96 t** (-3.21%); `delta_min` = **-75.88 t/ha exacto** = suma de
+  pools de clase 10 (117.93) − clase 30 (42.05); `decreased_px` = 1 717 clavado;
+  resto `unchanged` a 0. Mallas idénticas → sin resample, diferencia exacta.
+  `diff_c_storage_bas.tif` (nodata NaN) + zonal de Δ sobre `SubBasin.shp` +
+  **preview RdBu_r divergente centrado en 0 renderizado**. Sidecar
+  `<scen_jobdir>/compare_vs_<baseline>/compare.json`.
+- 26 tests en verde (nuevo `test_compare`: emparejado de rásters entre workspaces,
+  puro). Registrado y "Connected" en Claude Code.
 
 ### Pendiente
 - Resources y prompts MCP (por ahora solo tools).
@@ -243,9 +254,14 @@ Convenciones:
    sobre AOI + `raster_values_summary.csv` de InVEST + digest NL + PNG de preview
    + sidecar `summary.json`. Pendiente de afinar: `_DECIMATE_ABOVE_PX`,
    selección de columnas de id del AOI (ahora las 4 primeras).
-7. **`compare_scenarios`**: baseline vs alternativa, diferencia de salidas (el
-   propósito de InVEST — Tradeoffs). Reutiliza `geo/summarize.py` (stats sobre el
-   ráster diferencia) — patrón ya montado.
+7. ~~`compare_scenarios`~~ **HECHO** (2026-08-30) — `geo/compare.py` +
+   `plan_comparison`/`run_comparison` en `geo/client.py` + tool `compare_scenarios`.
+   Alinea escenario→baseline (reproject bilinear si difieren las mallas), escribe
+   `diff_<name>.tif` = escenario−baseline, delta stats (total antes/después, Δ, %,
+   px ↑/↓/=, histograma), zonal de Δ sobre AOI (reusa `summarize._zonal`), preview
+   divergente (`_preview_worker --diverging`, RdBu_r centrado en 0). Verificado
+   end-to-end con Carbon (deforestación clase 10→30). Pendiente de afinar:
+   chunking para rásters gigantes (ahora lee la banda entera para escribir el diff).
 8. **Rutinas de datos deterministas** (tools): `project.scaffold`, `geo.fetch_dem`,
    `geo.fetch_landcover`, `geo.reproject`, `geo.clip_to_aoi`, `geo.align_stack`,
    `tables.from_template`. Van en `invest-geo`, invocadas por subproceso igual que

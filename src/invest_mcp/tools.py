@@ -4,7 +4,8 @@
     validation     validate_invest_args
     execution      run_invest_model, get_invest_job, get_invest_job_logs,
                    list_invest_jobs, cancel_invest_job
-    results        list_invest_job_artifacts, summarize_results
+    results        list_invest_job_artifacts, summarize_results,
+                   compare_scenarios
     admin          invest_env, allow_input_dir
 
 Everything returns plain JSON-able dicts so the client gets structured output.
@@ -425,6 +426,151 @@ def summarize_results(job_id: str, aoi_path: str = "", rasters: list[str] | None
     }
 
 
+def _compare_narrative(model_title: str, base_id: str, scen_id: str,
+                       cmp: dict) -> str:
+    lines = [f"**{model_title}** — baseline `{base_id}` vs scenario `{scen_id}`"]
+    pairs = cmp.get("pairs", [])
+    lines.append(f"\n{len(pairs)} matching output raster(s) compared "
+                 "(diff = scenario - baseline).")
+    for r in pairs:
+        name = Path(r["relpath"]).name
+        if r.get("error"):
+            lines.append(f"- `{name}` — could not compare: {r['error']}")
+            continue
+        s = r.get("stats", {})
+        unit = f" {r['units']}" if r.get("units") else ""
+        label = r.get("label") or name
+        bsum = s.get("overlap_baseline_sum", s.get("baseline_sum"))
+        ssum = s.get("overlap_scenario_sum", s.get("scenario_sum"))
+        pct = s.get("pct_change")
+        pct_txt = f" ({pct:+.1f}%)" if pct is not None else ""
+        note = (" [scenario resampled to baseline grid]"
+                if r.get("resampled_scenario_to_baseline_grid") else "")
+        lines.append(
+            f"- `{name}` — {label}: total {_fmt(bsum)} → {_fmt(ssum)}{unit}, "
+            f"Δ {_fmt(s.get('delta_sum'))}{unit}{pct_txt}; "
+            f"{s.get('increased_px', 0):,} px ↑ / {s.get('decreased_px', 0):,} px ↓ / "
+            f"{s.get('unchanged_px', 0):,} px =; "
+            f"Δ mean {_fmt(s.get('delta_mean'))}{unit}, "
+            f"Δ range {_fmt(s.get('delta_min'))}–{_fmt(s.get('delta_max'))}{unit}.{note}"
+        )
+    aoi = cmp.get("aoi")
+    if aoi and aoi.get("features"):
+        lines.append(f"\nAOI Δ by feature — `{Path(aoi['path']).name}`, "
+                     f"{aoi['feature_count']} feature(s)"
+                     + (" (truncated)" if aoi.get("truncated") else "") + ":")
+        for f in aoi["features"][:15]:
+            props = ", ".join(f"{k}={v}" for k, v in (f.get("properties") or {}).items())
+            per = "; ".join(
+                f"{rn} Δ mean {_fmt(rs.get('mean'))} (Δ sum {_fmt(rs.get('sum'))}) "
+                f"over {rs.get('valid_count', 0):,} px"
+                for rn, rs in (f.get("rasters") or {}).items() if rs.get("valid_count")
+            )
+            lines.append(f"- feature {f['feature_index']}"
+                         + (f" ({props})" if props else "") + f": {per or 'no overlap'}")
+        for n in aoi.get("notes", []):
+            lines.append(f"- note: {n}")
+    elif aoi and aoi.get("error"):
+        lines.append(f"\nAOI Δ summary failed: {aoi['error']}")
+    if cmp.get("only_in_baseline"):
+        lines.append(f"\nOnly in baseline: {', '.join(cmp['only_in_baseline'])}")
+    if cmp.get("only_in_scenario"):
+        lines.append(f"Only in scenario: {', '.join(cmp['only_in_scenario'])}")
+    prev = cmp.get("preview")
+    if prev and prev.get("path"):
+        lines.append(f"\nPreview PNG: `{prev['path']}`")
+    elif prev and prev.get("error"):
+        lines.append(f"\nPreview PNG not rendered ({prev['error']}).")
+    return "\n".join(lines)
+
+
+def compare_scenarios(baseline_job_id: str, scenario_job_id: str,
+                      aoi_path: str = "", rasters: list[str] | None = None,
+                      include_intermediate: bool = False,
+                      make_preview: bool = True) -> dict[str, Any]:
+    """Compare a finished baseline run against a finished alternative-scenario
+    run of the *same* InVEST model — the core InVEST use case (trade-offs).
+
+    For every output raster present in both runs it writes a `scenario −
+    baseline` difference raster and reports: the total before and after, the
+    delta and its % change, how many pixels rose vs fell, optional per-feature
+    deltas over an AOI vector, a natural-language digest, and a best-effort
+    diverging-colormap PNG preview of the main diff. Writes a `compare.json`
+    sidecar. Needs the `invest-geo` conda env.
+
+    `baseline_job_id` / `scenario_job_id`: two succeeded `run_invest_model`
+      jobs of the same model (e.g. the model run with two different LULC maps).
+    `aoi_path`: absolute path to a polygon vector under an allowed folder;
+      reprojected to each raster's CRS automatically.
+    `rasters`: limit to these outputs (relative paths or bare names);
+      default is every top-level output raster the two runs share.
+    `include_intermediate`: also diff `intermediate_outputs/`.
+    """
+    base = _STORE.get(baseline_job_id)
+    scen = _STORE.get(scenario_job_id)
+    if base is None:
+        return {"ok": False, "error": f"No such job: {baseline_job_id}"}
+    if scen is None:
+        return {"ok": False, "error": f"No such job: {scenario_job_id}"}
+    if base.id == scen.id:
+        return {"ok": False, "error": "baseline and scenario are the same job."}
+    for tag, j in (("baseline", base), ("scenario", scen)):
+        if j.status not in TERMINAL:
+            return {"ok": False,
+                    "error": f"{tag} job is still {j.status}; wait for it to finish."}
+        if j.status != "succeeded":
+            return {"ok": False,
+                    "error": f"{tag} job did not succeed (status: {j.status})."}
+    if base.model_id != scen.model_id:
+        return {"ok": False,
+                "error": f"jobs are different models ({base.model_id!r} vs "
+                         f"{scen.model_id!r}); comparison needs the same model."}
+
+    if aoi_path:
+        try:
+            resolve_input_path(str(aoi_path), _SETTINGS.allowed_roots())
+        except SandboxError as exc:
+            return {"ok": False, "error": f"aoi_path rejected: {exc}"}
+
+    try:
+        spec = registry.get_spec(registry.resolve_model_id(base.model_id))
+    except Exception:  # noqa: BLE001 - calibration jobs etc. have no InVEST spec
+        spec = {}
+    model_title = spec.get("model_title") or base.model_id
+
+    try:
+        cmp = geo_client.run_comparison(
+            base.workspace, scen.workspace, spec, _SETTINGS,
+            aoi_path=aoi_path or None,
+            out_dir=str(Path(scen.workspace).parent / f"compare_vs_{base.id}"),
+            include_intermediate=bool(include_intermediate),
+            rasters=rasters or None,
+            make_preview=bool(make_preview),
+        )
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+
+    if not cmp.get("ok"):
+        return {"ok": False, "baseline_job_id": baseline_job_id,
+                "scenario_job_id": scenario_job_id, **cmp}
+
+    return {
+        "ok": True,
+        "baseline_job_id": baseline_job_id,
+        "scenario_job_id": scenario_job_id,
+        "model_id": base.model_id,
+        "model_title": model_title,
+        "compared_rasters": cmp.get("compared_rasters", []),
+        "only_in_baseline": cmp.get("only_in_baseline", []),
+        "only_in_scenario": cmp.get("only_in_scenario", []),
+        "pairs": cmp.get("pairs", []),
+        "aoi": cmp.get("aoi"),
+        "preview": cmp.get("preview"),
+        "sidecar_json": cmp.get("sidecar_json"),
+        "narrative": _compare_narrative(model_title, base.id, scen.id, cmp),
+    }
+
+
 # ---------------------------------------------------------------------------
 # calibration  (AWY / SWY / SDR / NDR — engine shared with the Workbench plugin)
 # ---------------------------------------------------------------------------
@@ -564,6 +710,7 @@ _TOOLS = [
     cancel_invest_job,
     list_invest_job_artifacts,
     summarize_results,
+    compare_scenarios,
     validate_calibration_config,
     run_calibration,
     get_calibration_job,

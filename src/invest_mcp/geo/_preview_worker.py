@@ -6,7 +6,10 @@ a throw-away subprocess means that crash costs us only the PNG, never the summar
 
 Usage::
 
-    <python> -m invest_mcp.geo._preview_worker <raster_path> <out_png> [label]
+    <python> -m invest_mcp.geo._preview_worker <raster_path> <out_png> [label] [--diverging]
+
+``--diverging`` centres the colour scale on zero with a red/blue map -- for a
+``scenario - baseline`` difference raster (see :mod:`invest_mcp.geo.compare`).
 
 Exit 0 and the PNG exists  -> success.
 Anything else              -> caller falls back to "no preview".
@@ -17,7 +20,7 @@ from __future__ import annotations
 import sys
 
 
-def _render(raster_path: str, out_png: str, label: str) -> int:
+def _render(raster_path: str, out_png: str, label: str, diverging: bool = False) -> int:
     import numpy as np
     import rasterio
 
@@ -45,8 +48,14 @@ def _render(raster_path: str, out_png: str, label: str) -> int:
     else:
         vmin, vmax = 0.0, 1.0
 
+    if diverging:
+        lim = max(abs(float(vmin)), abs(float(vmax))) or 1.0
+        vmin, vmax, cmap = -lim, lim, "RdBu_r"
+    else:
+        cmap = "viridis"
+
     fig, ax = plt.subplots(figsize=(7, 6), dpi=110)
-    im = ax.imshow(arr, cmap="viridis", vmin=vmin, vmax=vmax, interpolation="nearest")
+    im = ax.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest")
     ax.set_title(label or raster_path, fontsize=10)
     ax.set_xticks([])
     ax.set_yticks([])
@@ -59,12 +68,16 @@ def _render(raster_path: str, out_png: str, label: str) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
-        sys.stderr.write("usage: _preview_worker <raster_path> <out_png> [label]\n")
+        sys.stderr.write(
+            "usage: _preview_worker <raster_path> <out_png> [label] [--diverging]\n")
         return 2
     raster_path, out_png = argv[0], argv[1]
-    label = argv[2] if len(argv) > 2 else ""
+    rest = argv[2:]
+    diverging = "--diverging" in rest
+    labels = [a for a in rest if a != "--diverging"]
+    label = labels[0] if labels else ""
     try:
-        return _render(raster_path, out_png, label)
+        return _render(raster_path, out_png, label, diverging)
     except Exception as exc:  # noqa: BLE001 - this whole process is best-effort
         sys.stderr.write(f"preview render failed: {type(exc).__name__}: {exc}\n")
         return 1

@@ -190,12 +190,15 @@ def _jsonable(v):
 # ---------------------------------------------------------------------------
 # preview PNG (rendered in its own process -- see _preview_worker)
 # ---------------------------------------------------------------------------
-def _preview(primary: str, label: str, out_dir: Path) -> dict:
+def _preview(primary: str, label: str, out_dir: Path, *, diverging: bool = False) -> dict:
     out_png = out_dir / f"preview_{Path(primary).stem}.png"
+    argv = [sys.executable, "-m", "invest_mcp.geo._preview_worker",
+            primary, str(out_png), label or ""]
+    if diverging:  # centre the colour scale on zero (RdBu_r) for a difference raster
+        argv.append("--diverging")
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "invest_mcp.geo._preview_worker",
-             primary, str(out_png), label or ""],
+            argv,
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=_PREVIEW_TIMEOUT_S,
         )
