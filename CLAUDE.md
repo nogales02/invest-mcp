@@ -105,17 +105,19 @@ src/invest_mcp/
     sandbox.py       allow-list de rutas de entrada (+ allow_dir de sesión)
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
-    client.py        (server-side) build_payload + subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
+    summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
+    _preview_worker.py  (SUBPROCESO AISLADO) rinde el PNG de preview (matplotlib), best-effort
   calibration/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 16 tools MCP + register(server)
+  tools.py           las 17 tools MCP + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
 INSTALL.md           guía completa + snippets de config por cliente
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
-                     test_calibration_tools  (16 tests)
+                     test_calibration_tools, test_summarize  (21 tests)
 ```
 
 `geo/preflight.py` **solo importa stdlib al cargar**; rasterio/pyproj/shapely/
@@ -130,7 +132,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (16 tools)
+## 4. Tool surface (17 tools)
 
 | Tool | Para qué |
 |---|---|
@@ -146,6 +148,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `list_invest_jobs(limit=20)` | Runs recientes. |
 | `cancel_invest_job(job_id)` | Mata un run en cola o en marcha. |
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
+| `summarize_results(job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Resumen de un run terminado: stats por ráster de salida (válidos/nodata, min/max/media/std/suma, histograma 10-bins), zonal por feature sobre un AOI vectorial (reproyectado al CRS del ráster), la `raster_values_summary.csv` de InVEST si existe, un digest en lenguaje natural y un PNG de preview del ráster principal (best-effort, subproceso aislado). Escribe `<jobdir>/summary/summary.json`. Necesita el env `invest-geo`. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
 | `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
 | `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, `diagnostics` (sensibilidad Spearman por parámetro), `dotty_data` (rutas a JSON ploteables). |
@@ -193,11 +196,27 @@ Convenciones:
   `N4W-Facility/Invest_Plugin_Calibration` rama `refactor/shared-core` pusheada.
   Transporte dual (stdio + streamable-http). `INSTALL.md` con snippets por cliente
   + tabla de troubleshooting.
-- 16 tests en verde. Registrado y "Connected" en Claude Code.
+- **Run exitoso de Carbon** de punta a punta (2026-08-30): job
+  `carbon-20260830T103940-174b40` → `succeeded` en ~4 s con inputs de
+  `Dummy_InVEST` (`INPUTS/LULC/LULC.tif` + `INPUTS/Carbon_Pools.csv`, generado
+  extrayendo `lucode,c_above,c_below,c_soil,c_dead` de `01-Biophysical_Table.csv`).
+  `validate_invest_args` limpio → `run_invest_model` → `get_invest_job` →
+  `list_invest_job_artifacts`: 5 rásters + `raster_values_summary.csv`
+  (Baseline Carbon Storage 4 061 556 t) + `file_registry.json` + log InVEST +
+  `provenance.json` con sha256 de los 2 inputs. Cierra el único hueco de
+  verificación de modelos "normales".
+- **`summarize_results`** end-to-end (2026-08-30, .venv → subproceso → invest-geo)
+  sobre el job de Carbon: stats por ráster (`c_storage_bas.tif` suma
+  4 061 555.98 — **cuadra exacto** con la `raster_values_summary.csv` de InVEST;
+  los 4 pools suman el total), histograma, zonal sobre `SubBasin.shp`
+  (reproyectado al CRS del ráster; media 50.62 sobre 76 650 px) y **PNG de
+  preview sí renderizado** (subproceso aislado `_preview_worker`, matplotlib
+  funcionó aquí; si crashea solo se pierde el JPG). Sidecar
+  `<jobdir>/summary/summary.json`.
+- 21 tests en verde (nuevo `test_summarize`: planificación de rásters, pura).
+  Registrado y "Connected" en Claude Code.
 
 ### Pendiente
-- **Run exitoso de un modelo normal** (p.ej. carbon) de punta a punta — no hay
-  sample data del modelo simple en la máquina (único hueco de verificación).
 - Resources y prompts MCP (por ahora solo tools).
 - `conda-lock` para solves 100% reproducibles entre plataformas.
 - Merge del PR del plugin a `main` → cambiar `INVEST_MCP_CAL_PLUGIN_SPEC` /
@@ -214,11 +233,16 @@ Convenciones:
    dotty plots (JSON + JPG aislado), tools `run_calibration` / `get_calibration_job`.
 4. ~~Empaquetar para distribución git~~ **HECHO** — CLI, transporte dual, `INSTALL.md`,
    ambos repos pusheados.
-5. **Run exitoso de carbon** con sample data real — cerrar el hueco de verificación.
-6. **`summarize_results`**: zonal stats de los rásters de salida sobre un AOI +
-   resumen en lenguaje natural + PNG de preview + sidecar JSON de estadísticas.
+5. ~~Run exitoso de carbon~~ **HECHO** (2026-08-30) — con inputs de `Dummy_InVEST`
+   (LULC + `Carbon_Pools.csv` derivado de la tabla biofísica). Hueco cerrado.
+6. ~~`summarize_results`~~ **HECHO** (2026-08-30) — `geo/summarize.py` +
+   `geo/_preview_worker.py` + tool `summarize_results`. Stats por ráster + zonal
+   sobre AOI + `raster_values_summary.csv` de InVEST + digest NL + PNG de preview
+   + sidecar `summary.json`. Pendiente de afinar: `_DECIMATE_ABOVE_PX`,
+   selección de columnas de id del AOI (ahora las 4 primeras).
 7. **`compare_scenarios`**: baseline vs alternativa, diferencia de salidas (el
-   propósito de InVEST — Tradeoffs).
+   propósito de InVEST — Tradeoffs). Reutiliza `geo/summarize.py` (stats sobre el
+   ráster diferencia) — patrón ya montado.
 8. **Rutinas de datos deterministas** (tools): `project.scaffold`, `geo.fetch_dem`,
    `geo.fetch_landcover`, `geo.reproject`, `geo.clip_to_aoi`, `geo.align_stack`,
    `tables.from_template`. Van en `invest-geo`, invocadas por subproceso igual que

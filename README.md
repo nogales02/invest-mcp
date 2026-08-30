@@ -76,6 +76,7 @@ boundary — never point it at a drive root.
 | `list_invest_jobs` | Recent runs. |
 | `cancel_invest_job` | Kill a queued/running run. |
 | `list_invest_job_artifacts` | Catalog every output file. |
+| `summarize_results` | Per-raster stats + per-feature zonal stats over an AOI + InVEST's own totals + a natural-language digest + a preview PNG. |
 | `validate_calibration_config` | Check a calibration config (params, observed columns, `Status_Cal_*`, sandbox). |
 | `run_calibration` | Calibrate AWY / SWY / SDR / NDR_N / NDR_P (spotpy DDS/LHS/SCE-UA); returns `job_id`. |
 | `get_calibration_job` | Best parameters, objective, observed-vs-simulated, per-parameter diagnostics, dotty-plot data. |
@@ -83,9 +84,8 @@ boundary — never point it at a drive root.
 
 ## Roadmap
 
-* ~~Geospatial preflight~~ · ~~model calibration (5 hydro models)~~ — done.
-* A successful end-to-end run of a simple model (carbon) with real sample data.
-* `summarize_results`: zonal stats over an AOI + raster previews.
+* ~~Geospatial preflight~~ · ~~model calibration (5 hydro models)~~ ·
+  ~~end-to-end carbon run~~ · ~~`summarize_results` (per-raster + zonal stats + preview)~~ — done.
 * `compare_scenarios` (baseline vs alternative).
 * Data-prep routines (fetch DEM/land cover, reproject, clip, align) as deterministic tools + guided prompts.
 * Content-addressed run cache; schema snapshots diffed in CI.

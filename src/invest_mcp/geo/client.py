@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 from invest_mcp.config import Settings, geo_subprocess_env
 from invest_mcp.models.spec_translate import spatial_arg_specs
 
 _TIMEOUT_S = 300
+_SUMMARY_TIMEOUT_S = 900
+
+_RASTER_SUFFIXES = {".tif", ".tiff", ".vrt"}
+_SKIP_DIRS = {"taskgraph_cache", "_taskgraph_working_dir"}
 
 
 def build_payload(model_spec: dict, args: dict) -> dict:
@@ -70,3 +75,128 @@ def run_preflight(model_spec: dict, args: dict, settings: Settings) -> dict:
              "message": f"worker returned non-JSON. stdout={proc.stdout[:800]!r} "
                         f"stderr={proc.stderr[:800]!r}", "args": []}
         ], "layers": {}}
+
+
+# ---------------------------------------------------------------------------
+# result summarisation (zonal stats + preview) -- pure planning here, GDAL work
+# happens in invest_mcp.geo.summarize inside the invest-geo env.
+# ---------------------------------------------------------------------------
+def output_meta_map(model_spec: dict) -> dict[str, dict]:
+    """Map ``relative output path`` -> ``{id, about, units}`` from a MODEL_SPEC."""
+    out: dict[str, dict] = {}
+    for oid, o in (model_spec.get("outputs") or {}).items():
+        rel = str(o.get("path", oid)).replace("\\", "/").lstrip("./")
+        out[rel] = {"id": oid, "about": (o.get("about") or "").strip(),
+                    "units": o.get("units")}
+    return out
+
+
+def plan_rasters(
+    workspace: str,
+    meta_by_relpath: dict[str, dict],
+    *,
+    include_intermediate: bool = False,
+    explicit: list[str] | None = None,
+) -> list[dict]:
+    """Decide which output rasters to summarise and attach their spec metadata.
+
+    ``explicit`` (relative paths or bare filenames) overrides the auto scan. The
+    return order follows MODEL_SPEC output order, then any extras alphabetically.
+    """
+    ws = Path(workspace)
+    found: dict[str, Path] = {}
+    for p in sorted(ws.rglob("*")):
+        if p.is_dir() or p.suffix.lower() not in _RASTER_SUFFIXES:
+            continue
+        rel = str(p.relative_to(ws)).replace("\\", "/")
+        parts = set(rel.split("/"))
+        if parts & _SKIP_DIRS:
+            continue
+        found[rel] = p
+
+    if explicit:
+        wanted = {e.replace("\\", "/").lstrip("./") for e in explicit}
+        keep = {
+            rel: p for rel, p in found.items()
+            if rel in wanted or Path(rel).name in wanted
+        }
+    elif include_intermediate:
+        keep = found
+    else:
+        keep = {rel: p for rel, p in found.items()
+                if "intermediate_outputs/" not in rel + "/"
+                and not rel.startswith("intermediate")}
+        keep = keep or found  # models that write straight into intermediate dirs
+
+    spec_order = list(meta_by_relpath)
+    ordered = sorted(
+        keep,
+        key=lambda rel: (spec_order.index(rel) if rel in spec_order else 10_000, rel),
+    )
+    rasters: list[dict] = []
+    for rel in ordered:
+        meta = meta_by_relpath.get(rel, {})
+        rasters.append({
+            "path": str(keep[rel]),
+            "relpath": rel,
+            "label": meta.get("id") or Path(rel).stem,
+            "units": meta.get("units"),
+            "about": meta.get("about"),
+        })
+    return rasters
+
+
+def run_summary(
+    workspace: str,
+    model_spec: dict,
+    settings: Settings,
+    *,
+    aoi_path: str | None = None,
+    out_dir: str | None = None,
+    include_intermediate: bool = False,
+    rasters: list[str] | None = None,
+    make_preview: bool = True,
+    max_zonal_features: int = 200,
+) -> dict:
+    """Summarise a finished run's output rasters. Raises RuntimeError only if the
+    invest-geo env itself is missing (callers treat that as 'unavailable')."""
+    meta = output_meta_map(model_spec)
+    planned = plan_rasters(workspace, meta, include_intermediate=include_intermediate,
+                           explicit=rasters)
+    if not planned:
+        return {"ok": True, "rasters": [], "aoi": None, "preview": None,
+                "note": "no output rasters found in the workspace"}
+
+    primary = next((r["path"] for r in planned
+                    if "intermediate" not in r["relpath"]), planned[0]["path"])
+    payload = {
+        "rasters": [{k: r[k] for k in ("path", "label", "units", "about")} for r in planned],
+        "aoi_path": aoi_path,
+        "out_dir": out_dir or str(Path(workspace).parent / "summary"),
+        "primary": primary,
+        "make_preview": bool(make_preview),
+        "max_zonal_features": int(max_zonal_features),
+    }
+
+    geo_python = settings.resolved_geo_python  # RuntimeError if absent
+    try:
+        proc = subprocess.run(
+            [str(geo_python), "-m", "invest_mcp.geo.summarize"],
+            input=json.dumps(payload),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=geo_subprocess_env(geo_python), timeout=_SUMMARY_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"summary exceeded {_SUMMARY_TIMEOUT_S}s"}
+
+    if proc.returncode != 0 and not proc.stdout.strip():
+        return {"ok": False,
+                "error": (proc.stderr or "summary worker exited non-zero").strip()[-2000:]}
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False,
+                "error": f"worker returned non-JSON. stdout={proc.stdout[:800]!r} "
+                         f"stderr={proc.stderr[:800]!r}"}
+    result["planned_rasters"] = [r["relpath"] for r in planned]
+    return result

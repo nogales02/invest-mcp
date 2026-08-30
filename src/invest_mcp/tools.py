@@ -4,7 +4,7 @@
     validation     validate_invest_args
     execution      run_invest_model, get_invest_job, get_invest_job_logs,
                    list_invest_jobs, cancel_invest_job
-    results        list_invest_job_artifacts
+    results        list_invest_job_artifacts, summarize_results
     admin          invest_env, allow_input_dir
 
 Everything returns plain JSON-able dicts so the client gets structured output.
@@ -283,6 +283,148 @@ def list_invest_job_artifacts(job_id: str) -> dict[str, Any]:
     return cat
 
 
+def _read_invest_summary_csv(workspace: str) -> list[dict] | None:
+    """InVEST writes a `raster_values_summary.csv` (label/total/units/filename)
+    for several models -- surface it verbatim alongside our own stats."""
+    p = Path(workspace) / "raster_values_summary.csv"
+    if not p.is_file():
+        return None
+    import csv
+
+    try:
+        with p.open(encoding="utf-8-sig", newline="") as fh:
+            return [dict(row) for row in csv.DictReader(fh)]
+    except OSError:
+        return None
+
+
+def _fmt(n: Any, digits: int = 3) -> str:
+    if n is None:
+        return "n/a"
+    try:
+        return f"{float(n):,.{digits}g}" if abs(float(n)) < 1e-3 else f"{float(n):,.{digits}f}"
+    except (TypeError, ValueError):
+        return str(n)
+
+
+def _summary_narrative(model_title: str, job_id: str, summary: dict,
+                       invest_csv: list[dict] | None) -> str:
+    lines = [f"**{model_title}** — job `{job_id}`"]
+    rasters = summary.get("rasters", [])
+    lines.append(f"\n{len(rasters)} output raster(s) summarised.")
+    for r in rasters:
+        if r.get("error"):
+            lines.append(f"- `{r['name']}` — could not read: {r['error']}")
+            continue
+        s = r.get("stats", {})
+        unit = f" {r['units']}" if r.get("units") else ""
+        label = r.get("label") or r["name"]
+        approx = " (approx, decimated)" if s.get("approx") else ""
+        lines.append(
+            f"- `{r['name']}` — {label}: "
+            f"{s.get('valid_count', 0):,} valid / {s.get('pixel_count', 0):,} px{approx}; "
+            f"mean {_fmt(s.get('mean'))}{unit}, range {_fmt(s.get('min'))}–{_fmt(s.get('max'))}{unit}, "
+            f"sum {_fmt(s.get('sum'))}{unit}."
+        )
+    aoi = summary.get("aoi")
+    if aoi and aoi.get("features"):
+        lines.append(f"\nAOI zonal summary — `{Path(aoi['path']).name}`, "
+                     f"{aoi['feature_count']} feature(s)"
+                     + (" (truncated)" if aoi.get("truncated") else "") + ":")
+        for f in aoi["features"][:15]:
+            props = ", ".join(f"{k}={v}" for k, v in (f.get("properties") or {}).items())
+            per = "; ".join(
+                f"{rn} mean {_fmt(rs.get('mean'))} over {rs.get('valid_count', 0):,} px"
+                for rn, rs in (f.get("rasters") or {}).items() if rs.get("valid_count")
+            )
+            lines.append(f"- feature {f['feature_index']}"
+                         + (f" ({props})" if props else "") + f": {per or 'no overlap'}")
+        for n in aoi.get("notes", []):
+            lines.append(f"- note: {n}")
+    elif aoi and aoi.get("error"):
+        lines.append(f"\nAOI zonal summary failed: {aoi['error']}")
+    if invest_csv:
+        lines.append("\nInVEST's own `raster_values_summary.csv`:")
+        for row in invest_csv:
+            label = row.get("Raster") or row.get("raster_label") or "?"
+            lines.append(f"- {label}: {row.get('Total', '?')} {row.get('Units', '')}".rstrip())
+    prev = summary.get("preview")
+    if prev and prev.get("path"):
+        lines.append(f"\nPreview PNG: `{prev['path']}`")
+    elif prev and prev.get("error"):
+        lines.append(f"\nPreview PNG not rendered ({prev['error']}).")
+    return "\n".join(lines)
+
+
+def summarize_results(job_id: str, aoi_path: str = "", rasters: list[str] | None = None,
+                      include_intermediate: bool = False,
+                      make_preview: bool = True) -> dict[str, Any]:
+    """Summarise a finished run's output rasters: per-raster descriptive stats
+    (valid/nodata pixel counts, min/max/mean/std/sum, a 10-bin histogram),
+    optional per-feature zonal stats over an AOI vector, InVEST's own
+    `raster_values_summary.csv` if present, a natural-language digest, and a
+    best-effort PNG preview of the primary raster. Writes a `summary.json`
+    sidecar next to the job workspace. Needs the `invest-geo` conda env.
+
+    `aoi_path`: absolute path to a polygon vector (must be under an allowed
+      folder); reprojected to each raster's CRS automatically.
+    `rasters`: limit to these output files (relative paths or bare names);
+      default is every top-level output raster.
+    `include_intermediate`: also summarise `intermediate_outputs/`.
+    """
+    job = _STORE.get(job_id)
+    if job is None:
+        return {"ok": False, "error": f"No such job: {job_id}"}
+    if job.status not in TERMINAL:
+        return {"ok": False, "error": f"Job is still {job.status}; wait for it to finish."}
+    if job.status != "succeeded":
+        return {"ok": False, "error": f"Job did not succeed (status: {job.status}); "
+                                      "nothing to summarise."}
+
+    if aoi_path:
+        try:
+            resolve_input_path(str(aoi_path), _SETTINGS.allowed_roots())
+        except SandboxError as exc:
+            return {"ok": False, "error": f"aoi_path rejected: {exc}"}
+
+    try:
+        spec = registry.get_spec(registry.resolve_model_id(job.model_id))
+    except Exception:  # noqa: BLE001 - calibration jobs etc. have no InVEST spec
+        spec = {}
+    model_title = spec.get("model_title") or job.model_id
+
+    try:
+        summary = geo_client.run_summary(
+            job.workspace, spec, _SETTINGS,
+            aoi_path=aoi_path or None,
+            out_dir=str(Path(job.workspace).parent / "summary"),
+            include_intermediate=bool(include_intermediate),
+            rasters=rasters or None,
+            make_preview=bool(make_preview),
+        )
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+
+    if not summary.get("ok"):
+        return {"ok": False, "job_id": job_id, **summary}
+
+    invest_csv = _read_invest_summary_csv(job.workspace)
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "model_id": job.model_id,
+        "model_title": model_title,
+        "workspace": job.workspace,
+        "planned_rasters": summary.get("planned_rasters", []),
+        "rasters": summary.get("rasters", []),
+        "aoi": summary.get("aoi"),
+        "preview": summary.get("preview"),
+        "invest_raster_values_summary": invest_csv,
+        "sidecar_json": summary.get("sidecar_json"),
+        "narrative": _summary_narrative(model_title, job_id, summary, invest_csv),
+    }
+
+
 # ---------------------------------------------------------------------------
 # calibration  (AWY / SWY / SDR / NDR — engine shared with the Workbench plugin)
 # ---------------------------------------------------------------------------
@@ -421,6 +563,7 @@ _TOOLS = [
     list_invest_jobs,
     cancel_invest_job,
     list_invest_job_artifacts,
+    summarize_results,
     validate_calibration_config,
     run_calibration,
     get_calibration_job,
