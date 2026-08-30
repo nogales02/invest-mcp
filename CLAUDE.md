@@ -102,31 +102,35 @@ src/invest_mcp/
     jobs.py          Job (dataclass) + JobStore persistente (job.json por job)
     runner.py        lanza `invest run`, semáforo, cancel (taskkill /T), wait (Event)
   workspace/
-    sandbox.py       allow-list de rutas de entrada (+ allow_dir de sesión)
+    sandbox.py       allow-list de rutas de entrada (resolve_input_path) + de salida (resolve_output_path) + allow_dir de sesión
+    project.py       convención de "proyecto InVEST": scaffold del árbol + project.json (stdlib, corre en el server)
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
-    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison; subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_prep/run_reproject/run_clip/run_align_stack; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
     summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
     compare.py       (CORRE EN invest-geo) alinea escenario->baseline, ráster diferencia + delta stats + zonal + escribe compare.json
+    prep.py          (CORRE EN invest-geo) rutinas deterministas: op=reproject|clip|align_stack (raster+vector); lee JSON de stdin, escribe salidas + describe cada capa
     _preview_worker.py  (SUBPROCESO AISLADO) rinde el PNG de preview (matplotlib), best-effort; `--diverging` = RdBu_r centrado en 0 para un ráster diferencia
   calibration/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 18 tools MCP + register(server)
+  tools.py           las 22 tools MCP + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
 environment-server.yml  env conda "invest-mcp" (python+pip) para el servidor sin Python del sistema
 scripts/             bootstrap.ps1 (Windows) / bootstrap.sh (POSIX): elige server env (.venv o conda invest-mcp) + pip + setup + doctor + mcp-config
 docs/                INSTALACION-PASO-A-PASO.md  guía "para dummies" (ES): de cero a Claude conectado
 INSTALL.md           referencia terse: prereqs + snippets de config por cliente + seguridad
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
-                     test_calibration_tools, test_summarize, test_compare  (26 tests)
+                     test_calibration_tools, test_summarize, test_compare,
+                     test_prep  (40 tests)
 ```
 
-`geo/preflight.py` **solo importa stdlib al cargar**; rasterio/pyproj/shapely/
-pyogrio se importan dentro de las funciones (para que el env `.venv` pueda
-importar el módulo sin GDAL, aunque nunca lo ejecuta).
+`geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`)
+**solo importan stdlib al cargar**; rasterio/pyproj/shapely/pyogrio/geopandas se
+importan dentro de las funciones (para que el env `.venv` pueda importar el
+módulo sin GDAL, aunque nunca lo ejecuta).
 
 **Motor de calibración** = repo aparte `github.com/N4W-Facility/Invest_Plugin_Calibration`,
 rama `refactor/shared-core` (pusheada), paquete `invest_calibration_assistant.core`
@@ -136,7 +140,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (18 tools)
+## 4. Tool surface (22 tools)
 
 | Tool | Para qué |
 |---|---|
@@ -154,6 +158,10 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
 | `summarize_results(job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Resumen de un run terminado: stats por ráster de salida (válidos/nodata, min/max/media/std/suma, histograma 10-bins), zonal por feature sobre un AOI vectorial (reproyectado al CRS del ráster), la `raster_values_summary.csv` de InVEST si existe, un digest en lenguaje natural y un PNG de preview del ráster principal (best-effort, subproceso aislado). Escribe `<jobdir>/summary/summary.json`. Necesita el env `invest-geo`. |
 | `compare_scenarios(baseline_job_id, scenario_job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Baseline vs escenario alternativo del **mismo modelo** (el propósito de InVEST — tradeoffs). Por cada ráster de salida presente en ambos runs: alinea el escenario a la malla del baseline (reproyecta si difieren), escribe `diff_<nombre>.tif` = `escenario - baseline`, y reporta total antes/después, Δ y % de cambio, px que suben/bajan/igual, histograma de Δ, zonal de Δ por feature sobre un AOI, digest NL y un PNG de preview con colormap divergente. Escribe `<scen_jobdir>/compare_vs_<baseline_job_id>/compare.json`. Necesita el env `invest-geo`. |
+| `scaffold_project(root, name="", target_crs="", aoi_path="", overwrite=False)` | Crea el árbol de "proyecto InVEST" (`data/raw`, `data/processed`, `tables`, `datastacks`, `jobs`, `logs`) + `project.json` (nombre, CRS objetivo, AOI, `datasets: []`). Añade `root` a la allow-list de la sesión (lecturas y **escrituras**). Idempotente; `overwrite` solo reescribe el `project.json`. No necesita `invest-geo`. |
+| `reproject_layer(src_path, dst_path, target_crs, resampling="nearest", resolution=None)` | Reproyecta un ráster o vector a `target_crs` (EPSG/WKT/proj). `resampling` (solo ráster): `nearest` para categóricos (land cover), `bilinear`/`cubic`/`average` para continuos. `resolution` `[x,y]` opcional = tamaño de píxel objetivo. Necesita `invest-geo`. |
+| `clip_to_aoi(src_path, dst_path, aoi_path, all_touched=False)` | Recorta un ráster (crop al bbox del AOI + máscara) o vector (`gpd.clip`) al polígono de `aoi_path`. El AOI se reproyecta al CRS de la capa. Necesita `invest-geo`. |
+| `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")` | Pone varios rásters en **una malla idéntica** (mismo CRS + tamaño de píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`. Malla **o** desde `reference_path` (un ráster) **o** desde `target_crs`+`resolution`+`extent` juntos. `resampling` se aplica a todos (correr dos veces si mezcla categóricos y continuos). Necesita `invest-geo`. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
 | `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
 | `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, `diagnostics` (sensibilidad Spearman por parámetro), `dotty_data` (rutas a JSON ploteables). |
@@ -227,8 +235,22 @@ Convenciones:
   `diff_c_storage_bas.tif` (nodata NaN) + zonal de Δ sobre `SubBasin.shp` +
   **preview RdBu_r divergente centrado en 0 renderizado**. Sidecar
   `<scen_jobdir>/compare_vs_<baseline>/compare.json`.
-- 26 tests en verde (nuevo `test_compare`: emparejado de rásters entre workspaces,
-  puro). Registrado y "Connected" en Claude Code.
+- **Rutinas de datos deterministas (1ª tanda)** end-to-end (2026-08-30, .venv →
+  subproceso → invest-geo) contra `Dummy_InVEST`:
+  - `scaffold_project` → árbol + `project.json` (AOI registrada, `relpath` null si
+    fuera del proyecto) + `root` añadido a la allow-list de la sesión (escrituras
+    posteriores dentro de `data/processed/` funcionan).
+  - `reproject_layer` DEM (EPSG:32733 → 4326, bilinear) 362×520→370×519 ✓;
+    vector `SubBasin.shp` → 4326 ✓.
+  - `clip_to_aoi` DEM al bbox de `Basin.shp` 362×520→358×516, CRS y píxel
+    preservados ✓; vector `SubBasin` recortado a `Basin` ✓.
+  - `align_raster_stack` [DEM, LULC] con `reference=DEM` → ambos a **malla
+    idéntica** (362×520, mismos bounds y píxel, cada uno con su nodata/dtype) ✓.
+  - Sandbox de escritura rechaza `dst` fuera de toda carpeta permitida; validación
+    de `align_raster_stack` sin `reference`/`target_crs+resolution+extent`.
+- 40 tests en verde (nuevo `test_prep`: scaffold del proyecto, `resolve_output_path`,
+  construcción de payloads con `_run_prep` stubeado — todo puro). Registrado y
+  "Connected" en Claude Code.
 
 ### Pendiente
 - Resources y prompts MCP (por ahora solo tools).
@@ -262,10 +284,16 @@ Convenciones:
    divergente (`_preview_worker --diverging`, RdBu_r centrado en 0). Verificado
    end-to-end con Carbon (deforestación clase 10→30). Pendiente de afinar:
    chunking para rásters gigantes (ahora lee la banda entera para escribir el diff).
-8. **Rutinas de datos deterministas** (tools): `project.scaffold`, `geo.fetch_dem`,
-   `geo.fetch_landcover`, `geo.reproject`, `geo.clip_to_aoi`, `geo.align_stack`,
-   `tables.from_template`. Van en `invest-geo`, invocadas por subproceso igual que
-   `preflight` — patrón ya montado en `geo/client.py`.
+8. **Rutinas de datos deterministas** (tools) — **PARCIAL** (2026-08-30):
+   - **HECHO**: `scaffold_project` (`workspace/project.py`, stdlib) +
+     `reproject_layer` / `clip_to_aoi` / `align_raster_stack` (`geo/prep.py` en
+     invest-geo, `_run_prep`/`run_*` en `geo/client.py`). Sandbox de escritura
+     `resolve_output_path`. Verificado end-to-end (ver §5).
+   - **Pendiente**: `geo.fetch_dem`, `geo.fetch_landcover` (tocan red — decidir
+     fuentes: SRTM/Copernicus DEM, ESA WorldCover/ESRI LC), `tables.from_template`
+     (esqueleto de tabla biofísica por modelo). Afinar: chunking en `prep.py` para
+     rásters gigantes (lee la banda entera); overwrite de shapefiles; poblar
+     `datasets: []` del `project.json` desde estas rutinas.
 9. **Playbooks** (prompts MCP): "preparar+correr NDR", "preparar+correr Carbon",
    "comparar dos escenarios de uso de suelo".
 10. **Base de conocimiento** (resources): catálogo de fuentes de datos por variable,

@@ -306,3 +306,60 @@ def run_comparison(
     result.setdefault("only_in_scenario", plan["only_in_scenario"])
     result["compared_rasters"] = [p["relpath"] for p in plan["pairs"]]
     return result
+
+
+# ---------------------------------------------------------------------------
+# deterministic data prep (reproject / clip / align) -- pure dispatch here; the
+# GDAL work runs in invest_mcp.geo.prep inside the invest-geo env.
+# ---------------------------------------------------------------------------
+_PREP_TIMEOUT_S = 1800
+
+
+def _run_prep(payload: dict, settings: Settings) -> dict:
+    """Shell out to the prep worker in the invest-geo env. Raises RuntimeError
+    only if that env is missing (callers treat it as 'unavailable')."""
+    geo_python = settings.resolved_geo_python  # RuntimeError if absent
+    try:
+        proc = subprocess.run(
+            [str(geo_python), "-m", "invest_mcp.geo.prep"],
+            input=json.dumps(payload),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=geo_subprocess_env(geo_python), timeout=_PREP_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"prep op exceeded {_PREP_TIMEOUT_S}s"}
+
+    if proc.returncode != 0 and not proc.stdout.strip():
+        return {"ok": False,
+                "error": (proc.stderr or "prep worker exited non-zero").strip()[-2000:]}
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False,
+                "error": f"worker returned non-JSON. stdout={proc.stdout[:800]!r} "
+                         f"stderr={proc.stderr[:800]!r}"}
+
+
+def run_reproject(src: str, dst: str, target_crs: str, settings: Settings, *,
+                  resampling: str = "nearest", resolution: list[float] | None = None,
+                  kind: str = "auto") -> dict:
+    return _run_prep({"op": "reproject", "src": src, "dst": dst,
+                      "target_crs": target_crs, "resampling": resampling,
+                      "resolution": resolution, "kind": kind}, settings)
+
+
+def run_clip(src: str, dst: str, aoi: str, settings: Settings, *,
+             kind: str = "auto", all_touched: bool = False) -> dict:
+    return _run_prep({"op": "clip", "src": src, "dst": dst, "aoi": aoi,
+                      "kind": kind, "all_touched": all_touched}, settings)
+
+
+def run_align_stack(rasters: list[dict], settings: Settings, *,
+                    reference: str | None = None, target_crs: str | None = None,
+                    resolution: list[float] | None = None,
+                    extent: list[float] | None = None,
+                    resampling: str = "nearest") -> dict:
+    return _run_prep({"op": "align_stack", "rasters": rasters,
+                      "reference": reference, "target_crs": target_crs,
+                      "resolution": resolution, "extent": extent,
+                      "resampling": resampling}, settings)
