@@ -76,6 +76,14 @@ para limitar concurrencia. Los jobs persisten en
 - El servidor (.venv) llama al worker geo por subproceso:
   `<invest-geo>\python.exe -m invest_mcp.geo.preflight` con `GDAL_DATA` / `PROJ_DATA`
   / `PATH`(Library\bin) inyectados por `config.geo_subprocess_env()`.
+- **`invest-mcp setup` / conda discovery** (aprendido al verificar desde un clon
+  limpio): `_find_conda()` devuelve solo **ejecutables reales** — los wrappers
+  `condabin\*.BAT`/`.CMD` **crashean** en `env create` (`0xC0000409`). Prefiere el
+  `micromamba.exe` que trae el Workbench (`resources/micromamba.exe`), así que con
+  solo el Workbench basta. micromamba usa `create` (no `env create`) y deja los
+  envs en `%APPDATA%\mamba\envs\` — la detección (`_conda_env_roots`) ya mira ahí
+  + `MAMBA_ROOT_PREFIX` + `%LOCALAPPDATA%\{mamba,micromamba}`. `setup` tiene
+  fallback `<conda> run -n <name> python` para localizar el env e imprime la ruta.
 
 ---
 
@@ -175,11 +183,16 @@ Convenciones:
   `dotty_data_<MODELO>.json`. JPG de dotty plots se rinde en subproceso aislado
   (matplotlib roto en esta máquina → solo se pierde el JPG). Motor = **núcleo
   compartido** extraído del plugin del Workbench del usuario.
-- **CLI** `invest-mcp {serve,doctor,setup,mcp-config}`. `doctor` en verde en esta
-  máquina (invest.exe v3.20.1 + ambos envs + data root).
+- **CLI** `invest-mcp {serve,doctor,setup,mcp-config}`. **Verificado desde un clon
+  limpio** (2026-08-30): `git clone` → venv → `pip install -e .` → `doctor` (marca
+  envs ausentes como `[warn]`) → `setup --geo` (construye `invest-geo` con la
+  micromamba del Workbench + `pip install -e`) → `doctor` verde → worker de
+  preflight corre. Se arreglaron 3 bugs de discovery de conda en el proceso
+  (ver §2).
 - **Distribución lista**: `github.com/nogales02/invest-mcp` (main) pusheado;
   `N4W-Facility/Invest_Plugin_Calibration` rama `refactor/shared-core` pusheada.
-  Transporte dual (stdio + streamable-http). `INSTALL.md` con snippets por cliente.
+  Transporte dual (stdio + streamable-http). `INSTALL.md` con snippets por cliente
+  + tabla de troubleshooting.
 - 16 tests en verde. Registrado y "Connected" en Claude Code.
 
 ### Pendiente
@@ -269,7 +282,11 @@ Convenciones:
 # envs conda (crea invest-geo + invest-cal desde environment-*.yml + pip installs)
 .\.venv\Scripts\python -m invest_mcp setup           # ambos
 .\.venv\Scripts\python -m invest_mcp setup --geo     # solo uno
-# manual (equivalente): conda env create -f environment-geo.yml ; luego pip install -e . --no-deps en ese env
+#   usa: CONDA_EXE/MAMBA_EXE -> micromamba del PATH -> micromamba.exe del Workbench
+#        -> conda.exe/mamba.exe real bajo una raiz (NUNCA un condabin\*.bat)
+#   micromamba deja los envs en %APPDATA%\mamba\envs ; doctor los encuentra igual
+# manual: conda env create -f environment-geo.yml  (o micromamba create -f ... -y)
+#         luego  conda run -n invest-geo pip install -e . --no-deps
 # probar el worker geo:  echo '{"spatial_inputs":[]}' | <invest-geo>\python.exe -m invest_mcp.geo.preflight
 
 # registrar en Claude Code (ya hecho, scope local)

@@ -60,13 +60,37 @@ invest-mcp setup --geo      # just preflight_geo
 invest-mcp setup --cal      # just calibration
 ```
 
-`setup` finds `conda` / `mamba` / `micromamba` automatically (including the one
-the InVEST Workbench bundles). Pass `--conda <path>` to force one.
+**What `setup` uses to build them**, in order: `CONDA_EXE` / `MAMBA_EXE`, a
+`micromamba` on `PATH`, **the `micromamba.exe` that the InVEST Workbench bundles**
+(so if you have the Workbench you usually need nothing else), or a real
+`conda`/`mamba` executable under a detected install. It never uses a
+`condabin\*.bat`/`.cmd` shim (those crash on `env create` on some Windows
+setups). Force one with `--conda <path>`.
+
+**Where the envs land:** conda/mamba put them under `<conda-root>/envs/`;
+**micromamba puts them under `%APPDATA%\mamba\envs\`** (Windows) or
+`~/micromamba/envs/` (POSIX). Either way `invest-mcp doctor` and the server find
+them automatically. If a nonstandard location isn't picked up, point
+`INVEST_MCP_GEO_PYTHON` / `INVEST_MCP_CAL_PYTHON` at the env's `python`
+(`invest-mcp setup` prints the exact path it used).
+
+**Manual equivalent** (if you'd rather not use `setup`):
+
+```bash
+conda env create -f environment-geo.yml          # or: micromamba create -f environment-geo.yml -y
+conda run -n invest-geo  pip install -e . --no-deps
+conda env create -f environment-cal.yml
+conda run -n invest-cal  pip install "spotpy>=1.6.2" "invest-calibration-assistant @ git+https://github.com/N4W-Facility/Invest_Plugin_Calibration.git@refactor/shared-core"
+conda run -n invest-cal  pip install -e . --no-deps
+```
 
 The calibration engine is the shared core of the InVEST Workbench "Calibration
 Assistant" plugin; `setup --cal` pip-installs it. Override the source with
 `--plugin-spec` or `INVEST_MCP_CAL_PLUGIN_SPEC` (e.g. point at a fork or a local
 path) until it is merged upstream.
+
+`setup` is idempotent: re-run it after a `git pull`. If an env already exists the
+`create` step is a no-op and it just refreshes the `pip install -e .` into it.
 
 ---
 
@@ -78,14 +102,24 @@ invest-mcp doctor
 
 ```
 [ok]   invest      C:\Program Files\InVEST 3.20.1 Workbench\...\invest.exe  (v3.20.1)
-[ok]   invest-geo  C:\Users\you\.conda\envs\invest-geo\python.exe
+[ok]   invest-geo  C:\Users\you\AppData\Roaming\mamba\envs\invest-geo\python.exe
 [ok]   invest-cal  C:\Users\you\.conda\envs\invest-cal\python.exe
 [ok]   data root   C:\Users\you\invest-mcp-data
 all good
 ```
 
 `[warn]` for `invest-geo` / `invest-cal` just means those features are off until
-you run `invest-mcp setup`.
+you run `invest-mcp setup` — the exit code is driven only by `invest`.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `doctor` shows `invest [FAIL]` | Install the InVEST Workbench, or set `INVEST_MCP_INVEST_EXE` to an `invest` / `invest.exe`. |
+| `setup`: *No conda/mamba/micromamba found* | Install [Miniforge](https://github.com/conda-forge/miniforge) or micromamba, or `--conda <path>`. If the InVEST Workbench is installed its bundled micromamba is used automatically. |
+| `setup` created an env but `doctor` still says *not found* | The env is in a spot detection missed. `setup` prints the path it used — set `INVEST_MCP_GEO_PYTHON` / `INVEST_MCP_CAL_PYTHON` to it. |
+| `setup` fails with a `condabin\*.bat` crash / `Could not open lockfile` | Old `invest-mcp`; update. It now avoids the `.bat` shims. Or `--conda` a real `conda.exe` / `micromamba.exe`. |
+| calibration dotty-plot `.jpg` never appears | Known: some headless conda matplotlib builds crash in the Agg backend. The machine-readable `FIGURES/dotty_data_<MODEL>.json` is always written; the run is unaffected. |
 
 ---
 
