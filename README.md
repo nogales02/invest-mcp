@@ -38,15 +38,26 @@ still works.
 
 ## Install
 
-**See [INSTALL.md](INSTALL.md)** for the full walkthrough (prerequisites, every
-client's config snippet, security notes). Short version:
+- **Beginners / from-zero on Windows:** step-by-step guide (Spanish) →
+  [docs/INSTALACION-PASO-A-PASO.md](docs/INSTALACION-PASO-A-PASO.md).
+- **One-shot script:** from a clone, run
+  `powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1`
+  (or `scripts/bootstrap.sh` on POSIX) — makes the venv, installs the package,
+  builds the conda envs, runs `doctor`, prints the client config.
+- **Full reference** (every client's snippet, security notes): [INSTALL.md](INSTALL.md).
+
+Short version by hand:
 
 ```bash
-pip install "git+https://github.com/nogales02/invest-mcp"   # or: git clone + pip install -e .
-invest-mcp setup     # (optional) build the invest-geo + invest-cal conda envs
-invest-mcp doctor    # check what's wired
+git clone https://github.com/nogales02/invest-mcp && cd invest-mcp
+python -m venv .venv && .venv/Scripts/pip install -e .   # POSIX: .venv/bin/pip
+invest-mcp setup      # (optional) build the invest-geo + invest-cal conda envs
+invest-mcp doctor     # check what's wired
 invest-mcp mcp-config # print the block to paste into your client
 ```
+
+> A bare `pip install git+…` works for browse/validate/run but **not** for
+> `invest-mcp setup` (it needs the repo's `environment-*.yml`) — clone for that.
 
 `invest-mcp` with no subcommand runs the server over stdio. `invest-mcp serve
 --transport streamable-http --port 8000` runs a shared HTTP server (needs the

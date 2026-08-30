@@ -1,5 +1,11 @@
 # Installing invest-mcp
 
+> **New to this / on Windows from zero?** Follow the hand-held, step-by-step
+> guide instead: [docs/INSTALACION-PASO-A-PASO.md](docs/INSTALACION-PASO-A-PASO.md)
+> (Spanish). It covers installing Python and the InVEST Workbench, the
+> `scripts/bootstrap.ps1` one-shot installer, wiring Claude Desktop / Claude
+> Code, and a first test run. This file is the terse reference.
+
 `invest-mcp` is a standard [MCP](https://modelcontextprotocol.io) server. It has
 no dependency on any particular AI client — anything that speaks MCP can use it
 (Claude Desktop / Claude Code, Cline, Continue, Cursor, Zed, LibreChat, `mcphost`
@@ -28,13 +34,24 @@ Python ≥ 3.10 for the server itself.
 
 ## 2. Install the server (from git — no PyPI)
 
-**Option A — pip from the repo:**
+**Option 0 — the one-shot script (clone first):** does §2 + §3 + §4 and prints §5.
+
+```bash
+git clone https://github.com/nogales02/invest-mcp
+cd invest-mcp
+powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1   # Windows
+./scripts/bootstrap.sh                                           # POSIX
+#   flags: -SkipEnvs / --skip-envs, -GeoOnly, -CalOnly, -Conda <path>, -Http
+```
+
+**Option A — pip from the repo** (browse/validate/run only; `setup` won't work
+without the repo's `environment-*.yml`):
 
 ```bash
 pip install "git+https://github.com/nogales02/invest-mcp"
 ```
 
-**Option B — clone (lets you edit / update with `git pull`):**
+**Option B — clone by hand (lets you edit / update with `git pull`):**
 
 ```bash
 git clone https://github.com/nogales02/invest-mcp
@@ -44,7 +61,7 @@ python -m venv .venv
 # POSIX:    .venv/bin/pip install -e .
 ```
 
-Either way you get an `invest-mcp` command and `python -m invest_mcp`.
+Any of these gives you an `invest-mcp` command and `python -m invest_mcp`.
 
 ---
 
