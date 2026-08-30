@@ -1,85 +1,70 @@
 # invest-mcp
 
-An **MCP server** that lets an AI assistant (Claude Code, Claude Desktop, …)
-drive **Natural Capital Project [InVEST](https://naturalcapitalproject.stanford.edu/software/invest)**
-models through natural language: browse models, understand their inputs,
-validate a parameter set, run a model, and inspect the outputs.
+An **[MCP](https://modelcontextprotocol.io) server** that lets an AI assistant
+drive **Natural Capital Project
+[InVEST](https://naturalcapitalproject.stanford.edu/software/invest)** models
+through natural language: browse models, understand and validate their inputs,
+run them on data from disk, check coordinate systems, calibrate the hydrological
+models against observations, and inspect the outputs.
+
+It is a plain MCP server — **not tied to any one AI client**. Works with Claude
+Desktop / Claude Code, Cline, Continue, Cursor, Zed, LibreChat, `mcphost` for
+Ollama, the OpenAI Agents SDK, or anything else that speaks MCP.
 
 ## How it works
 
 ```
-Claude Code  ──stdio/JSON-RPC──▶  invest_mcp.server
+ any MCP client ──stdio | http──▶  invest_mcp.server
+                                     │  (light: mcp + pydantic only; never imports natcap.invest)
+                                     ├─ models/        MODEL_SPEC ▶ JSON Schema + briefing
+                                     ├─ execution/     job store + one-process-per-run supervisor
+                                     ├─ workspace/     input-path sandbox + output catalog
+                                     ├─ geo/           geospatial preflight (CRS / overlap / pixel)
+                                     ├─ calibration/   spotpy calibration (shared engine)
+                                     └─ provenance     per-run reproducibility manifest
                                      │
-                                     ├─ models/      MODEL_SPEC ▶ JSON Schema + briefing
-                                     ├─ execution/   job store + subprocess supervisor
-                                     ├─ workspace/   input path sandbox + output catalog
-                                     ├─ geo/         geospatial preflight (CRS/overlap/pixel)
-                                     └─ provenance   per-run reproducibility manifest
-                                     │
-                          ┌──────────┴───────────┐
-                          ▼                      ▼
-              invest.exe (InVEST Workbench)   invest-geo conda env
-                  model runs                  GDAL/rasterio/pyproj
+                   ┌─────────────────┼───────────────────┬────────────────────┐
+                   ▼                 ▼                    ▼                    ▼
+           invest.exe          invest-geo env       invest-cal env        JobStore
+        (InVEST Workbench)   GDAL/rasterio/pyproj   natcap.invest+spotpy  (persistent)
 ```
 
-The server never imports `natcap.invest`. It shells out to the `invest`
-command-line tool, one OS process per model run. That keeps GDAL crashes
-contained, makes cancellation a real kill, and means **no conda/GDAL setup is
-required for running models** as long as the InVEST Workbench is installed.
-
-Anything that needs GDAL directly — currently the **geospatial preflight**, later
-the data-prep routines — runs in a separate `invest-geo` conda env, also invoked
-as a subprocess. It is optional: without it, `preflight_geo` reports "env missing"
-and `validate_invest_args` marks the geo section as skipped.
-
-## Requirements
-
-* Python ≥ 3.10 for the server itself (only `mcp`, `pydantic`, `pydantic-settings`).
-* An `invest` executable — automatically found if the **InVEST Workbench** is
-  installed, otherwise set `INVEST_MCP_INVEST_EXE`.
+The server shells out to the `invest` command line, one OS process per run — GDAL
+crashes stay contained, cancellation is a real kill, and **running models needs
+no conda/GDAL setup** as long as the InVEST Workbench is installed. The
+`invest-geo` (preflight) and `invest-cal` (calibration) conda envs are **optional
+sidecars**; without them those tools report "env missing" and everything else
+still works.
 
 ## Install
 
-```powershell
-# 1. the server itself (light: mcp + pydantic only)
-python -m venv .venv
-.\.venv\Scripts\pip install -e .
+**See [INSTALL.md](INSTALL.md)** for the full walkthrough (prerequisites, every
+client's config snippet, security notes). Short version:
 
-# 2. (optional) the geospatial sidecar env, for preflight_geo
-conda env create -f environment.yml
-conda run -n invest-geo pip install -e . --no-deps
+```bash
+pip install "git+https://github.com/nogales02/invest-mcp"   # or: git clone + pip install -e .
+invest-mcp setup     # (optional) build the invest-geo + invest-cal conda envs
+invest-mcp doctor    # check what's wired
+invest-mcp mcp-config # print the block to paste into your client
 ```
 
-## Register with Claude Code
-
-```powershell
-claude mcp add invest -- "Y:\Server-UserFolder\Escritorio\MCP_InVEST\.venv\Scripts\python.exe" -m invest_mcp
-```
-
-Then in a session: *"list the InVEST models"*, *"describe the carbon model"*,
-*"run carbon with lulc = … and the pools table = …"*.
+`invest-mcp` with no subcommand runs the server over stdio. `invest-mcp serve
+--transport streamable-http --port 8000` runs a shared HTTP server (needs the
+`[http]` extra).
 
 ## Configuration
 
-All optional — see `.env.example`. Key ones:
+All optional (`INVEST_MCP_*` env vars or a `.env`) — see `.env.example` and the
+table in [INSTALL.md](INSTALL.md#6-configuration-reference-invest_mcp_). The input
+**allow-list** (default: data root + working dir; widen with
+`INVEST_MCP_ALLOWED_INPUT_DIRS` or the `allow_input_dir` tool) is the key safety
+boundary — never point it at a drive root.
 
-| Variable | Meaning |
-|---|---|
-| `INVEST_MCP_INVEST_EXE` | Path to `invest.exe` (auto-detected otherwise). |
-| `INVEST_MCP_GEO_PYTHON` | `python.exe` of the `invest-geo` env (auto-detected otherwise). |
-| `INVEST_MCP_DATA_ROOT` | Where job workspaces/logs go. Default `%USERPROFILE%\invest-mcp-data`. |
-| `INVEST_MCP_ALLOWED_INPUT_DIRS` | Extra folders the server may read inputs from (`;`-separated). |
-| `INVEST_MCP_MAX_CONCURRENT_JOBS` | Parallel runs (default 2). |
-
-The data root and the server's working directory are always readable. Any other
-input path is rejected until you trust its folder — at runtime with the
-`allow_input_dir` tool, or permanently via `INVEST_MCP_ALLOWED_INPUT_DIRS`.
-
-## Tools (v0.1)
+## Tools
 
 | Tool | Purpose |
 |---|---|
-| `invest_env` | Confirm InVEST is reachable; show paths/version. |
+| `invest_env` | Confirm InVEST is reachable; show paths/version and which sidecars are available. |
 | `allow_input_dir` | Trust an extra input folder for this session. |
 | `list_invest_models` | All models: id, aliases, title. |
 | `describe_invest_model` | Briefing + `args` JSON Schema + inputs/outputs. |
@@ -91,19 +76,28 @@ input path is rejected until you trust its folder — at runtime with the
 | `list_invest_jobs` | Recent runs. |
 | `cancel_invest_job` | Kill a queued/running run. |
 | `list_invest_job_artifacts` | Catalog every output file. |
+| `validate_calibration_config` | Check a calibration config (params, observed columns, `Status_Cal_*`, sandbox). |
+| `run_calibration` | Calibrate AWY / SWY / SDR / NDR_N / NDR_P (spotpy DDS/LHS/SCE-UA); returns `job_id`. |
+| `get_calibration_job` | Best parameters, objective, observed-vs-simulated, per-parameter diagnostics, dotty-plot data. |
+| `cancel_calibration_job` | Kill a calibration job. |
 
 ## Roadmap
 
-* ~~Geospatial preflight (CRS/extent/pixel/nodata lint)~~ — done (`preflight_geo`).
-* Result summarisation: zonal stats over an AOI + raster previews.
+* ~~Geospatial preflight~~ · ~~model calibration (5 hydro models)~~ — done.
+* A successful end-to-end run of a simple model (carbon) with real sample data.
+* `summarize_results`: zonal stats over an AOI + raster previews.
 * `compare_scenarios` (baseline vs alternative).
-* Data-prep routines (download DEM/land cover, reproject, clip, align) exposed
-  as deterministic tools + guided prompts.
+* Data-prep routines (fetch DEM/land cover, reproject, clip, align) as deterministic tools + guided prompts.
 * Content-addressed run cache; schema snapshots diffed in CI.
 
-## Tests
+## Development
 
-```powershell
-.\.venv\Scripts\pip install -e ".[dev]"
-.\.venv\Scripts\pytest -q
+```bash
+pip install -e ".[dev]"
+pytest -q
 ```
+
+The calibration engine lives in a separate repo
+([Invest_Plugin_Calibration](https://github.com/N4W-Facility/Invest_Plugin_Calibration),
+branch `refactor/shared-core`) and is shared with the InVEST Workbench
+"Calibration Assistant" plugin.

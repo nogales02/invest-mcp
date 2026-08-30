@@ -1,0 +1,35 @@
+# invest-cal -- calibration env for invest-mcp.
+#
+# natcap.invest + the geospatial stack. `spotpy`, the shared calibration core
+# (invest-calibration-assistant) and invest_mcp itself are added by pip -- see
+# `invest-mcp setup --cal`, which runs:
+#     <env>/python -m pip install "spotpy>=1.6.2" "<INVEST_MCP_CAL_PLUGIN_SPEC>"
+#     <env>/python -m pip install -e . --no-deps
+#
+# natcap.invest can't share the invest-geo env (its gdal pin conflicts), hence a
+# separate env. matplotlib-base is here for the calibration dotty plots (the
+# renderer runs in its own process, so a broken native matplotlib only costs the
+# .jpg -- the machine-readable dotty_data_<MODEL>.json is always written).
+#
+#   conda env create -f environment-cal.yml
+name: invest-cal
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - natcap.invest>=3.15
+  - gdal
+  - rasterio
+  - pyogrio
+  - shapely
+  - pyproj
+  - pygeoprocessing
+  - geopandas
+  - rasterstats
+  - pandas
+  - "numpy<2.3"          # matplotlib native stack is unstable on newer numpy here
+  - matplotlib-base
+  - openpyxl
+  - taskgraph
+  - pip

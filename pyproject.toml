@@ -10,17 +10,22 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Jonathan Nogales" }]
+keywords = ["mcp", "invest", "natcap", "ecosystem-services", "geospatial"]
 dependencies = [
     "mcp>=2,<3",
     "pydantic>=2",
     "pydantic-settings>=2",
 ]
 
+[project.urls]
+Repository = "https://github.com/nogales02/invest-mcp"
+
 [project.optional-dependencies]
+http = ["uvicorn>=0.30"]          # only needed for --transport streamable-http / sse
 dev = ["pytest>=8"]
 
 [project.scripts]
-invest-mcp = "invest_mcp.server:main"
+invest-mcp = "invest_mcp.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,24 @@
+# invest-geo -- geospatial sidecar env for invest-mcp.
+#
+# Holds GDAL + rasterio/pyproj/shapely/pyogrio. The server (which only needs
+# `mcp` + `pydantic`) invokes it as a subprocess for the geospatial preflight:
+#     <env>/python -m invest_mcp.geo.preflight
+#
+#   conda env create -f environment-geo.yml     # or: micromamba create -f ...
+#   <env>/python -m pip install -e . --no-deps  # so it can import invest_mcp
+#
+# `invest-mcp setup --geo` does both steps for you.
+name: invest-geo
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - gdal
+  - rasterio
+  - pyproj
+  - shapely
+  - pyogrio
+  - numpy
+  - pygeoprocessing
+  - pip

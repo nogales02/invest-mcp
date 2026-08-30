@@ -32,23 +32,29 @@ def _version_key(path: Path) -> tuple:
 
 
 def detect_invest_exe() -> Path | None:
-    """Best effort discovery of an ``invest`` executable."""
+    """Best effort discovery of an ``invest`` executable.
+
+    Order: ``INVEST_MCP_INVEST_EXE`` -> InVEST Workbench install (Windows) ->
+    an ``invest`` on ``PATH`` (e.g. a conda-forge ``natcap.invest`` install on
+    Linux/macOS).
+    """
     # 1. Explicit override.
     env = os.environ.get("INVEST_MCP_INVEST_EXE")
     if env and Path(env).is_file():
         return Path(env)
 
-    # 2. Bundled with an installed Workbench (pick the highest version).
-    candidates: list[Path] = []
-    for pattern in _WORKBENCH_GLOBS:
-        base = Path(pattern).anchor
-        rest = pattern[len(base):]
-        try:
-            candidates.extend(p for p in Path(base).glob(rest) if p.is_file())
-        except OSError:
-            continue
-    if candidates:
-        return sorted(candidates, key=_version_key)[-1]
+    # 2. Bundled with an installed Workbench (Windows only; pick highest version).
+    if os.name == "nt":
+        candidates: list[Path] = []
+        for pattern in _WORKBENCH_GLOBS:
+            base = Path(pattern).anchor
+            rest = pattern[len(base):]
+            try:
+                candidates.extend(p for p in Path(base).glob(rest) if p.is_file())
+            except OSError:
+                continue
+        if candidates:
+            return sorted(candidates, key=_version_key)[-1]
 
     # 3. On PATH.
     from shutil import which
@@ -65,17 +71,26 @@ _CAL_ENV_NAME = "invest-cal"
 
 
 def _conda_env_roots() -> list[Path]:
+    """Candidate conda/mamba roots whose ``envs/<name>`` we probe. Cross-platform:
+    unknown paths simply don't exist."""
     roots: list[Path] = []
     for var in ("CONDA_ROOT", "CONDA_PREFIX", "MAMBA_ROOT_PREFIX"):
         val = os.environ.get(var)
         if val:
-            roots.append(Path(val))
+            p = Path(val)
+            # CONDA_PREFIX may be an activated env: its root is two levels up
+            roots += [p, p.parent.parent if p.parent.name == "envs" else p]
+    for exe_var in ("CONDA_EXE", "MAMBA_EXE"):
+        val = os.environ.get(exe_var)
+        if val:
+            roots.append(Path(val).parent.parent)  # <root>/condabin/conda(.exe)
+    home = Path.home()
     roots += [
-        Path.home() / ".conda",
-        Path.home() / "miniconda3",
-        Path.home() / "anaconda3",
-        Path(r"C:\ProgramData\miniconda3"),
-        Path(r"C:\ProgramData\anaconda3"),
+        home / ".conda", home / "miniconda3", home / "anaconda3",
+        home / "miniforge3", home / "mambaforge", home / "micromamba",
+        Path(r"C:\ProgramData\miniconda3"), Path(r"C:\ProgramData\anaconda3"),
+        Path("/opt/conda"), Path("/opt/miniconda3"), Path("/opt/homebrew/Caskroom/miniconda/base"),
+        Path("/usr/local/miniconda3"), Path("/usr/share/miniconda"),
     ]
     return roots
 
@@ -150,6 +165,20 @@ class Settings(BaseSettings):
     max_concurrent_jobs: int = Field(default=2, ge=1, le=32)
     invest_timeout_seconds: int = Field(default=6 * 60 * 60, ge=60)
     locale: str | None = Field(default=None)
+
+    # transport (any MCP client): stdio for local launch, streamable-http/sse for
+    # a shared/remote server. host/port apply to the HTTP transports only.
+    transport: str = Field(default="stdio")
+    host: str = Field(default="127.0.0.1")
+    port: int = Field(default=8000, ge=1, le=65535)
+
+    @field_validator("transport", mode="before")
+    @classmethod
+    def _norm_transport(cls, v):
+        s = str(v or "stdio").strip().lower().replace("_", "-")
+        if s not in ("stdio", "streamable-http", "sse"):
+            raise ValueError("transport must be stdio, streamable-http or sse")
+        return s
 
     @field_validator("allowed_input_dirs", mode="before")
     @classmethod

@@ -52,7 +52,7 @@ para limitar concurrencia. Los jobs persisten en
   `pip install -e . --no-deps`. Creado con
   `conda create -n invest-geo -c conda-forge --override-channels ...` (los canales
   `defaults` de Anaconda piden aceptar ToS — usar siempre `-c conda-forge
-  --override-channels`, y `nodefaults` en environment.yml).
+  --override-channels`, y `nodefaults` en environment-geo.yml / environment-cal.yml).
 - **Env de calibración**: `invest-cal` (conda-forge, Python 3.12) en
   `C:\Users\Nogales\.conda\envs\invest-cal`. Trae **natcap.invest 3.20.1**,
   gdal 3.12, geopandas, rasterstats, matplotlib-base, pandas + `spotpy` (pip) +
@@ -232,19 +232,27 @@ Convenciones:
 # tests
 .\.venv\Scripts\pytest -q
 
-# correr el servidor a mano (debug)
-.\.venv\Scripts\python -m invest_mcp
+# CLI: subcomandos serve / doctor / setup / mcp-config
+.\.venv\Scripts\python -m invest_mcp doctor
+.\.venv\Scripts\python -m invest_mcp mcp-config --client claude-code
 
-# env geoespacial (crear / actualizar). OJO: -c conda-forge --override-channels
-conda create -n invest-geo -c conda-forge --override-channels -y python=3.12 gdal rasterio pyproj shapely pyogrio numpy pygeoprocessing pip
-& "$env:USERPROFILE\.conda\envs\invest-geo\python.exe" -m pip install -e . --no-deps
-# probar el worker:  echo '{"spatial_inputs":[]}' | <invest-geo>\python.exe -m invest_mcp.geo.preflight
+# envs conda (crea invest-geo + invest-cal desde environment-*.yml + pip installs)
+.\.venv\Scripts\python -m invest_mcp setup           # ambos
+.\.venv\Scripts\python -m invest_mcp setup --geo     # solo uno
+# manual (equivalente): conda env create -f environment-geo.yml ; luego pip install -e . --no-deps en ese env
+# probar el worker geo:  echo '{"spatial_inputs":[]}' | <invest-geo>\python.exe -m invest_mcp.geo.preflight
 
 # registrar en Claude Code (ya hecho, scope local)
 claude mcp add invest --scope local -- "Y:\Server-UserFolder\Escritorio\MCP_InVEST\.venv\Scripts\python.exe" -m invest_mcp
 ```
 
-Tras tocar código en `geo/`, reinstalar en **ambos** envs (`.venv` y `invest-geo`).
+Distribución: repo git `github.com/nogales02/invest-mcp` (rama `main`), sin PyPI.
+`pip install git+…` o `git clone` + `pip install -e .`. Detalle en `INSTALL.md`.
+El servidor es cliente-agnóstico (stdio + `--transport streamable-http`); sirve
+para Claude, Cline, LibreChat, mcphost (Ollama), OpenAI Agents SDK, etc.
+
+Tras tocar código en `geo/` o `calibration/worker.py`, reinstalar en el env
+correspondiente (`.venv` + `invest-geo` / `invest-cal`).
 
 Tras cambiar tools, **reiniciar Claude Code** para que recargue el servidor MCP.
 
