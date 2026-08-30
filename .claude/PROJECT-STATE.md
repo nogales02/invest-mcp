@@ -1,39 +1,48 @@
-# invest-mcp — curated project-state snapshot (2026-08-30, rev 3)
+# invest-mcp — curated project-state snapshot (2026-08-30, rev 4)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
 distilled state.
 
-## ⟳ RESUME POINT (2026-08-30, late) — read this first
+## ⟳ RESUME POINT (2026-08-30, later) — read this first
 
-Long session that added the **data-preparation layer** (roadmap points 8–10).
-Now **29 MCP tools + 4 resources + 2 prompts, 108 tests green** (6 skip — numpy
-helpers absent from `.venv`, verified in `invest-geo`).
+Two long sessions: the **data-preparation layer** (roadmap 8–10) then the
+**Workbench hand-off** + hydrography + a soil refinement. Now **32 MCP tools +
+4 resources + 2 prompts, 141 tests green** (6 skip — numpy helpers absent from
+`.venv`, verified in `invest-geo`).
 
-**8 stacked branches on `main`, NONE merged** — each PR targets the branch below,
-merge in order or squash all:
+**11 stacked branches on `main`, NONE merged** — each PR targets the branch below,
+merge bottom-up (GitHub auto-retargets the next to `main`) or squash the stack:
 `data-prep-routines` → `readiness-resources-prompts` → `delineate-watersheds` →
 `tables-from-template` → `fetch-dem` → `fetch-landcover` → `fetch-climate` →
-`fetch-soil` (HEAD = `fetch-soil`, 0510ba5). All pushed to
-`github.com/nogales02/invest-mcp`. `gh` CLI is NOT installed here → PRs open by
-hand via the `git push` compare link.
+`fetch-soil` → `fetch-hydrography` (26423d2) → `datastack-io` (e2d28c6) →
+`fetch-soil-bedrock` (HEAD). All pushed to `github.com/nogales02/invest-mcp`.
+`gh` CLI is NOT installed here → PRs open via the GitHub REST API with the git
+credential-manager token. PRs #1–#8 open; #9 (fetch-hydrography→fetch-soil),
+#10 (datastack-io→fetch-hydrography), #11 (fetch-soil-bedrock→datastack-io) to
+be opened the same way.
 
 **Data-prep chain, all built & verified end-to-end:** `scaffold_project` →
-`fetch_dem` / `fetch_landcover` / `fetch_climate` / `fetch_soil` →
-`reproject_layer` / `clip_to_aoi` / `align_raster_stack` → `delineate_watersheds`
-→ `tables_from_template` → `project_readiness` → `validate_invest_args` →
-`run_invest_model` → `summarize_results` / `compare_scenarios`.
+`fetch_dem` / `fetch_landcover` / `fetch_climate` / `fetch_soil` /
+`fetch_hydrography` → `reproject_layer` / `clip_to_aoi` / `align_raster_stack` →
+`delineate_watersheds` → `tables_from_template` → `project_readiness` →
+`import_datastack` / `export_datastack` (Workbench round-trip) →
+`validate_invest_args` → `run_invest_model` →
+`summarize_results` / `compare_scenarios`.
 
 **Gotcha:** remote `/vsicurl/` access is intermittently slow — S3
 (`*.s3.amazonaws.com`) tile opens sometimes hung >180 s; `files.isric.org`
-(SoilGrids) VRT reads take ~2–3 min for a small AOI. Not a code bug; retry a hung
-`fetch_*` (the fetch worker timeout is 1800 s).
+(SoilGrids) VRT reads take ~2–3 min for a small AOI; the SoilGrids-2017 BDTICM
+GeoTIFF (~8.5 GB, non-COG) can truncate a windowed read (`TIFFReadEncodedStrip
+failed`) → `_read_bdticm` retries 4×. HydroSHEDS (`data.hydrosheds.org`) was
+fast & reliable but **blocks HEAD** → `CPL_VSIL_CURL_USE_HEAD=NO`. Not code
+bugs; retry a hung `fetch_*` (worker timeout 1800 s).
 
-**Next candidates** (CLAUDE.md §6): `fetch_hydrography` (HydroSHEDS), `fetch_soil`
-depth-to-bedrock / PAWC (SoilGrids 2017 `BDTICM`), `fetch_climate`
-`source=terraclimate|chirps`, a cited-coefficient `[resource]` to fill
-`tables_from_template` skeletons, `import_datastack` / `export_datastack` (the
-declared Workbench integration point, still no tool), `build_report`.
+**Next candidates** (CLAUDE.md §6): `fetch_soil` PAWC (SoilGrids 2017
+`AWCh1..3`/`WWP`), HSG refined with Ksat/depth; `fetch_climate`
+`source=terraclimate|chirps`; a cited-coefficient `[resource]` to fill
+`tables_from_template` skeletons; `clone_job`; `build_report`;
+`recommend_model` `[prompt]`.
 
 ## What the project is
 
@@ -88,7 +97,7 @@ SDK: `mcp` 2.x — `FastMCP` was renamed to `MCPServer`
   writes a numpy JSON first and renders the image in a separate process that can
   crash without taking the run down. Images render fine on Workbench/CI/Linux.
 
-## Tool surface — 29 MCP tools (+ 4 resources, 2 prompts)
+## Tool surface — 32 MCP tools (+ 4 resources, 2 prompts)
 
 Env/discovery: `invest_env`, `allow_input_dir`.
 Model introspection: `list_invest_models`, `describe_invest_model`,
@@ -96,13 +105,15 @@ Model introspection: `list_invest_models`, `describe_invest_model`,
 Runs: `run_invest_model`, `get_invest_job`, `get_invest_job_logs`,
 `list_invest_jobs`, `cancel_invest_job`, `list_invest_job_artifacts`,
 `summarize_results`, `compare_scenarios`.
-Data prep (all in `invest-geo`, subprocess pattern): `scaffold_project`,
-`project_readiness`, `fetch_dem` (Copernicus GLO-30), `fetch_landcover`
+Data prep (`invest-geo` subprocess unless noted): `scaffold_project` (stdlib),
+`project_readiness` (stdlib), `fetch_dem` (Copernicus GLO-30), `fetch_landcover`
 (ESA WorldCover), `fetch_climate` (WorldClim precip + Hargreaves ETo),
-`fetch_soil` (SoilGrids 2.0: texture / hydrologic soil group / USLE K),
-`reproject_layer`, `clip_to_aoi`, `align_raster_stack`, `delineate_watersheds`
-(pygeoprocessing D8), `tables_from_template` (biophysical-table skeleton from
-LULC + MODEL_SPEC).
+`fetch_soil` (SoilGrids 2.0: texture / hydrologic soil group / USLE K;
+SoilGrids 2017: depth_to_bedrock), `fetch_hydrography` (HydroSHEDS v1
+rivers / basins), `reproject_layer`, `clip_to_aoi`, `align_raster_stack`,
+`delineate_watersheds` (pygeoprocessing D8), `tables_from_template`
+(biophysical-table skeleton from LULC + MODEL_SPEC).
+Datastack (stdlib, Workbench round-trip): `import_datastack`, `export_datastack`.
 Calibration: `validate_calibration_config`, `run_calibration`,
 `get_calibration_job`, `cancel_calibration_job`.
 
@@ -194,12 +205,36 @@ documents conditionals in the description.
     EPIC 1995 pedotransfer from sand/silt/clay/SOC → SI ×0.1317, float32).
     `depth` 0-5cm..100-200cm, `stat` mean/Q0.05/Q0.5/Q0.95. Alps check: HSG mostly
     group B in the valley + nodata on the high massif; K 0.030–0.035 (global range
-    0.01–0.07); all 12 USDA texture classes verified.
+    0.01–0.07); all 12 USDA texture classes verified. Later added
+    `variable=depth_to_bedrock` (SoilGrids **2017** `BDTICM`, a single global
+    EPSG:4326 GeoTIFF, cm→mm for AWY `depth_to_root_rest_layer_path`;
+    `_read_bdticm` retries the windowed read — the file is non-COG strip-organised
+    and truncates intermittently).
+  - `fetch_hydrography` — `geo/hydrography.py`, HydroSHEDS v1, no auth.
+    `product=rivers` (HydroRIVERS v1.0 lines) / `basins` (HydroBASINS v1c
+    standard polygons, Pfafstetter `level` 1..12). Reads the shapefile out of the
+    remote zip via GDAL `/vsizip//vsicurl/` + a bbox filter (the `.sbn` index
+    keeps the transfer local; `CPL_VSIL_CURL_USE_HEAD=NO` because the server
+    blocks HEAD). `region` auto-detected from the AOI centroid vs 9 continental
+    envelopes (`af ar as au eu gr na sa si`); an ambiguous centroid errors asking
+    for explicit `region=`. `clip_to_aoi` defaults False (whole intersecting
+    features). Alps check: 100 rivers / 10 basins@lev9 → EPSG:32632 with real
+    HydroSHEDS attributes; region auto → `eu`; GPKG + GeoJSON out.
+  - `import_datastack` / `export_datastack` — `workspace/datastack.py` (pure
+    stdlib), the declared Workbench integration point. Read / write / build the
+    `.invest.json` parameter set (`{args, model_id, invest_version}`); tolerate
+    legacy `model_name: natcap.invest.<id>`; `relativize`/`absolutize` path args.
+    `export` takes `model_id`+`args` or a `job_id` (lifts them from the job's
+    `datastack.json`); `relative=True` for a portable stack. `import` resolves
+    the model spec and reports `required_missing` / `files_missing` /
+    `paths_outside_sandbox` / `ready`, feeding `validate_invest_args` →
+    `run_invest_model`. Verified end-to-end with the real registry: export from a
+    finished carbon job → valid stack → re-import → model resolved, ready.
   - `project_readiness` — `workspace/readiness.py`, scans `data/`+`tables/`,
     guesses each file's role by name, matches against each model's required file
     inputs → ready / gaps per model. Name-based & best-effort by design.
   - 4 MCP resources + 2 prompts wired into `build_server()`.
-- 108 tests green (6 skipped: numpy helpers — `_ra_mm_per_day`, USDA texture
+- 141 tests green (6 skipped: numpy helpers — `_ra_mm_per_day`, USDA texture
   triangle, EPIC K — with numpy absent from `.venv`; verified in `invest-geo`).
   Registered and "Connected" in Claude Code as `invest`.
 
@@ -242,20 +277,23 @@ Notable core fixes: `Factor_BioTable` float-coerces gated columns (pandas 2.1
 
 ## Roadmap
 
-**Done since rev 1:** `compare_scenarios` (tool #18); the whole data-prep layer
-(tools #19–29: scaffold/readiness/fetch_dem/fetch_landcover/fetch_climate/
-fetch_soil/reproject/clip/align/delineate_watersheds/tables_from_template); first
-MCP resources (4) + prompts (2).
+**Done since rev 1:** `compare_scenarios` (#18); the data-prep layer (#19–29:
+scaffold/readiness/fetch_dem/fetch_landcover/fetch_climate/fetch_soil/reproject/
+clip/align/delineate_watersheds/tables_from_template); 4 MCP resources + 2
+prompts. **Rev 3→4:** `fetch_hydrography` (#30, HydroSHEDS rivers/basins);
+`import_datastack`/`export_datastack` (#31–32, Workbench `.invest.json`
+round-trip); `fetch_soil` `variable=depth_to_bedrock` (SoilGrids 2017 BDTICM).
 
 **Still open** (CLAUDE.md §6 has the full tagged list):
-1. More `fetch_*`: `fetch_hydrography` (HydroSHEDS); `fetch_soil` depth-to-bedrock
-   / PAWC (SoilGrids 2017 `BDTICM`) + `stat`≠`mean` + HSG refined with Ksat/depth
-   (HYSOGs250m / HiHydroSoil); `fetch_climate` `source=terraclimate` (real years,
-   netCDF) / `chirps` (tropics); `fetch_dem` `source=srtm|nasadem` (Earthdata token).
+1. More `fetch_*`: `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) +
+   `stat`≠`mean` + HSG refined with Ksat/depth (HYSOGs250m / HiHydroSoil);
+   `fetch_climate` `source=terraclimate` (real years, netCDF) / `chirps`
+   (tropics); `fetch_dem` `source=srtm|nasadem` (Earthdata token);
+   `fetch_hydrography` HydroBASINS lakes / nested subwatersheds.
 2. `[resource]` cited-coefficient knowledge base to fill `tables_from_template`
    skeletons (per land-cover class / region, with sources).
-3. `import_datastack` / `export_datastack` — round-trip `.invest.json` with the
-   Workbench (the declared integration point, still no tool). `clone_job`.
+3. `clone_job` (copy a finished run's args, re-run with edits — feeds
+   `compare_scenarios`); datastack "archive" (`.invest.tar.gz`).
 4. Output side: `compare_scenarios_multi`, `aggregate_to_units`, `build_report`
    (methods+results memo), `export_map`, `run_uncertainty` (MC over coefficients).
 5. Content-addressed run cache by input hash; JSON Schema snapshots + CI diff for

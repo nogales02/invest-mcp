@@ -982,6 +982,10 @@ def fetch_soil(dst_path: str, variable: str, aoi_path: str = "",
       - `"usle_k"` -> soil erodibility K for SDR, in SI units
         (t.ha.h.ha-1.MJ-1.mm-1), via the Williams / EPIC (1995) pedotransfer
         equation from sand/silt/clay/SOC. float32.
+      - `"depth_to_bedrock"` -> absolute depth to bedrock for Annual Water
+        Yield's `depth_to_root_rest_layer_path`, from **SoilGrids 2017**
+        (`BDTICM`, 250 m), converted cm -> mm. float32. `depth` / `stat` are
+        ignored. The global source GeoTIFF opens slowly (~2 min) -- not a hang.
 
     `depth` is one of `0-5cm` (default), `5-15cm`, `15-30cm`, `30-60cm`,
     `60-100cm`, `100-200cm`; `stat` is `mean` (default), `Q0.05`, `Q0.5` or
@@ -990,9 +994,11 @@ def fetch_soil(dst_path: str, variable: str, aoi_path: str = "",
     project grid; with `clip_to_aoi` the result is masked to the polygon.
     Writes under `dst_path`'s folder (must be allowed). Needs the `invest-geo` env.
     """
-    if variable not in ("texture", "hydrologic_soil_group", "usle_k"):
+    if variable not in ("texture", "hydrologic_soil_group", "usle_k",
+                        "depth_to_bedrock"):
         return {"ok": False, "error": "variable must be 'texture', "
-                                      "'hydrologic_soil_group' or 'usle_k'"}
+                                      "'hydrologic_soil_group', 'usle_k' or "
+                                      "'depth_to_bedrock'"}
     if (source or "soilgrids") != "soilgrids":
         return {"ok": False, "error": "only source='soilgrids' (SoilGrids 2.0) is wired up"}
     if depth not in ("0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm", "100-200cm"):
