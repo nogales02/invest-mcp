@@ -216,24 +216,25 @@ Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 punto
 **29 tools + 4 resources + 2 prompts. 108 tests en verde** (`pytest -q`, 6 skip
 sin numpy).
 
-**8 ramas apiladas sobre `main`, NINGUNA fusionada** (cada PR apunta a la de
-abajo; fusionar en este orden o hacer squash de todas):
+**8 ramas apiladas sobre `main`, NINGUNA fusionada**, cada una con **PR abierto
+apuntando a la de abajo** (fusionar en este orden — GitHub reapunta la siguiente
+a `main` sola — o cerrar todas y hacer un squash de `fetch-soil` contra `main`):
 
 ```
 main
- └─ data-prep-routines        d951843  scaffold_project + reproject/clip/align_raster_stack + resolve_output_path
-     └─ readiness-resources-prompts  622a3cd  project_readiness + 4 resources + 2 prompts (resources.py, prompts.py)
-         └─ delineate-watersheds     404ad9c  geo/hydro.py (cadena D8 pygeoprocessing)
-             └─ tables-from-template 2d7780d  workspace/biotable.py + op=raster_classes + spec_translate.table_arg_specs
-                 └─ fetch-dem        d6453d1  geo/fetch.py op=dem (Copernicus GLO-30, sin auth)
-                     └─ fetch-landcover  de81391  geo/fetch.py op=landcover (ESA WorldCover, sin auth)
-                         └─ fetch-climate  bd36ba4  geo/climate.py (WorldClim precip + Hargreaves ETo)
-                             └─ fetch-soil  geo/soil.py (SoilGrids 2.0: texture + HSG + USLE K)   ← HEAD
+ └─ data-prep-routines        d951843  PR #2 → main       scaffold_project + reproject/clip/align_raster_stack + resolve_output_path
+     └─ readiness-resources-prompts  622a3cd  PR #3 → #2   project_readiness + 4 resources + 2 prompts (resources.py, prompts.py)
+         └─ delineate-watersheds     404ad9c  PR #4 → #3   geo/hydro.py (cadena D8 pygeoprocessing)
+             └─ tables-from-template 2d7780d  PR #5 → #4   workspace/biotable.py + op=raster_classes + spec_translate.table_arg_specs
+                 └─ fetch-dem        d6453d1  PR #6 → #5   geo/fetch.py op=dem (Copernicus GLO-30, sin auth)
+                     └─ fetch-landcover  de81391  PR #7 → #6   geo/fetch.py op=landcover (ESA WorldCover, sin auth)
+                         └─ fetch-climate  5ed59c6  PR #8 → #7   geo/climate.py (WorldClim precip + Hargreaves ETo)
+                             └─ fetch-soil  fa67940  PR #1 → #8   geo/soil.py (SoilGrids 2.0: texture + HSG + USLE K)   ← HEAD
 ```
 
 Todas pusheadas a `github.com/nogales02/invest-mcp`. `gh` CLI **no** está
-instalado en esta máquina → los PRs se abren a mano con el link que da `git
-push`.
+instalado en esta máquina → los 8 PRs se abrieron por la API de GitHub con el
+token del credential manager de git (`git credential fill`).
 
 **Cadena de preparación ya montada** (todas las tools existen y están
 verificadas): `scaffold_project` →
