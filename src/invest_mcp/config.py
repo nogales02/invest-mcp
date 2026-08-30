@@ -92,6 +92,17 @@ def _conda_env_roots() -> list[Path]:
         Path("/opt/conda"), Path("/opt/miniconda3"), Path("/opt/homebrew/Caskroom/miniconda/base"),
         Path("/usr/local/miniconda3"), Path("/usr/share/miniconda"),
     ]
+    # micromamba's default root prefix (esp. the one the InVEST Workbench bundles)
+    for var in ("MAMBA_ROOT_PREFIX",):
+        v = os.environ.get(var)
+        if v:
+            roots.append(Path(v))
+    appdata = os.environ.get("APPDATA")
+    localappdata = os.environ.get("LOCALAPPDATA")
+    if appdata:
+        roots.append(Path(appdata) / "mamba")
+    if localappdata:
+        roots += [Path(localappdata) / "mamba", Path(localappdata) / "micromamba"]
     return roots
 
 

@@ -34,22 +34,61 @@ _PLUGIN_SPEC_DEFAULT = os.environ.get(
 
 # ---------------------------------------------------------------------------
 def _find_conda() -> str | None:
+    """A real conda/mamba/micromamba **executable** (never a ``condabin`` .BAT/.CMD
+    wrapper -- those crash on `env create` on some Windows setups)."""
+    from invest_mcp.config import _conda_env_roots
+
     for var in ("MAMBA_EXE", "CONDA_EXE"):
         v = os.environ.get(var)
-        if v and Path(v).is_file():
+        if v and Path(v).is_file() and Path(v).suffix.lower() not in (".bat", ".cmd"):
             return v
-    for name in ("micromamba", "mamba", "conda"):
+    # micromamba is a single static binary -> always safe
+    mm = shutil.which("micromamba")
+    if mm:
+        return mm
+    # the InVEST Workbench bundles one
+    for base in (Path(r"C:\Program Files"), Path(r"C:\Program Files (x86)")):
+        for hit in base.glob("InVEST *Workbench/resources/micromamba.exe"):
+            return str(hit)
+    # real conda/mamba exe inside a detected install root
+    for root in _conda_env_roots():
+        for rel in ("Scripts/mamba.exe", "Scripts/conda.exe", "condabin/mamba.exe",
+                    "condabin/conda.exe", "bin/mamba", "bin/conda"):
+            cand = root / rel
+            if cand.is_file():
+                return str(cand)
+    # last resort: PATH, but skip .bat/.cmd shims
+    for name in ("mamba", "conda"):
         found = shutil.which(name)
-        if found:
+        if found and Path(found).suffix.lower() not in (".bat", ".cmd"):
             return found
-    # the InVEST Workbench bundles micromamba
-    for p in (Path(r"C:\Program Files"), Path(r"C:\Program Files (x86)")):
-        for mm in p.glob("InVEST *Workbench/resources/micromamba.exe"):
-            return str(mm)
     return None
 
 
+def _env_create_cmd(conda: str, yml: Path) -> list[str]:
+    if "micromamba" in Path(conda).name.lower():
+        return [conda, "create", "-y", "-f", str(yml)]
+    return [conda, "env", "create", "-y", "-f", str(yml)]
+
+
+def _env_python_via(conda: str, name: str) -> Path | None:
+    """Ask the conda tool itself for an env's python (covers non-standard roots
+    like micromamba's %APPDATA%\\mamba)."""
+    try:
+        cp = subprocess.run(
+            [conda, "run", "-n", name, "python", "-c",
+             "import sys; print(sys.executable)"],
+            capture_output=True, text=True, timeout=120,
+        )
+        p = Path(cp.stdout.strip())
+        return p if cp.returncode == 0 and p.is_file() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _run(cmd: list[str], **kw) -> int:
+    if cmd and Path(cmd[0]).suffix.lower() in (".bat", ".cmd"):
+        cmd = ["cmd", "/c", *cmd]
     print("+", " ".join(cmd), flush=True)
     return subprocess.run(cmd, **kw).returncode
 
@@ -131,24 +170,35 @@ def cmd_setup(args) -> int:
         return 2
     do_geo = args.geo or not args.cal
     do_cal = args.cal or not args.geo
+    print(f"using: {conda}\n")
     rc = 0
     if do_geo:
-        yml = _REPO / "environment-geo.yml"
-        rc |= _run([conda, "env", "create", "-y", "-f", str(yml)])
-        gp = detect_geo_python()
+        rc |= _run(_env_create_cmd(conda, _REPO / "environment-geo.yml"))
+        gp = detect_geo_python() or _env_python_via(conda, "invest-geo")
         if gp:
+            print(f"invest-geo python: {gp}")
             rc |= _run([str(gp), "-m", "pip", "install", "-e", str(_REPO), "--no-deps"])
+        else:
+            print("! invest-geo not found after create -- check the log above")
+            rc |= 1
     if do_cal:
-        yml = _REPO / "environment-cal.yml"
-        rc |= _run([conda, "env", "create", "-y", "-f", str(yml)])
-        cp_ = detect_cal_python()
+        rc |= _run(_env_create_cmd(conda, _REPO / "environment-cal.yml"))
+        cp_ = detect_cal_python() or _env_python_via(conda, "invest-cal")
         if cp_:
+            print(f"invest-cal python: {cp_}")
             rc |= _run([str(cp_), "-m", "pip", "install", "spotpy>=1.6.2",
                         args.plugin_spec])
             rc |= _run([str(cp_), "-m", "pip", "install", "-e", str(_REPO), "--no-deps"])
+        else:
+            print("! invest-cal not found after create -- check the log above")
+            rc |= 1
     print("\nsetup " + ("done" if rc == 0 else f"finished with errors (rc={rc})"))
-    print("next: invest-mcp doctor")
-    return rc
+    if rc == 0:
+        print("next: invest-mcp doctor")
+    else:
+        print("some steps failed; fix and re-run, or set INVEST_MCP_GEO_PYTHON / "
+              "INVEST_MCP_CAL_PYTHON to the env's python.")
+    return 0 if rc == 0 else 1
 
 
 # ---------------------------------------------------------------------------
