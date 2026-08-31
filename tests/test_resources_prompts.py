@@ -22,6 +22,30 @@ def test_data_sources_catalog_is_nonempty_markdown():
         assert heading in md
 
 
+def test_model_guide_is_markdown_and_covers_the_installed_models():
+    md = resources.model_guide()
+    assert md.lstrip().startswith("#")
+    for mid in ("annual_water_yield", "seasonal_water_yield", "sdr", "ndr",
+                "carbon", "habitat_quality", "urban_cooling_model",
+                "coastal_vulnerability", "pollination"):
+        assert f"`{mid}`" in md, mid
+    for section in ("answers:", "needs:", "gives:", "Outside InVEST's scope"):
+        assert section in md
+
+
+def test_recommend_model_playbook_renders_and_points_at_the_reference():
+    out = prompts.recommend_model("where is erosion worst in my basin?",
+                                  project_root="C:/proj/x")
+    assert "{question}" not in out and "{project_root}" not in out
+    assert "where is erosion worst" in out
+    assert "`C:/proj/x`" in out
+    assert "invest://model-guide" in out
+    assert "list_invest_models" in out and "project_readiness" in out
+
+    bare = prompts.recommend_model()
+    assert "{question}" not in bare and "no project folder" in bare
+
+
 def test_prepare_and_run_playbook_substitutes_model_and_root():
     out = prompts.prepare_and_run_model("ndr", project_root="C:/proj/x")
     assert "{model_id}" not in out and "{project_root}" not in out
@@ -59,6 +83,7 @@ def test_prompt_register_is_wired(monkeypatch):
         "prepare_and_run_model",
         "compare_land_use_scenarios",
         "fill_biophysical_table",
+        "recommend_model",
     }
 
 
@@ -74,3 +99,4 @@ def test_resource_register_is_wired():
     assert "invest://models" in seen
     assert "invest://model/{model_id}/cheatsheet" in seen
     assert "invest://data-sources" in seen
+    assert "invest://model-guide" in seen

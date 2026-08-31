@@ -15,9 +15,10 @@
     admin          invest_env, allow_input_dir
 
 Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
-invest://conventions, invest://data-sources, invest://coefficients) and prompts
-(prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table)
-registered from invest_mcp.resources / .prompts.
+invest://conventions, invest://data-sources, invest://model-guide,
+invest://coefficients) and prompts (prepare_and_run_model,
+compare_land_use_scenarios, fill_biophysical_table, recommend_model) registered
+from invest_mcp.resources / .prompts.
 
 Everything returns plain JSON-able dicts so the client gets structured output.
 """
