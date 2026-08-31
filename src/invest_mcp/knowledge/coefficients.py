@@ -24,6 +24,7 @@ Layout::
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 _DIR = Path(__file__).parent / "coefficients"
@@ -68,6 +69,83 @@ def entry(name: str) -> str:
     if key in ("readme", "read-me", "index-doc"):
         return _read(_DIR / "README.md")
     raise UnknownEntryError(name)
+
+
+# lowercased InVEST table column -> KB parameter file it is described by.
+# kc / kc_1..kc_12 are matched separately (see _KC_RE).
+_COLUMN_TO_PARAM: dict[str, str] = {
+    "usle_c": "usle_c",
+    "usle_p": "usle_p",
+    "load_n": "ndr_nutrient",
+    "load_p": "ndr_nutrient",
+    "eff_n": "ndr_nutrient",
+    "eff_p": "ndr_nutrient",
+    "crit_len_n": "ndr_nutrient",
+    "crit_len_p": "ndr_nutrient",
+    "proportion_subsurface_n": "ndr_nutrient",
+    "cn_a": "curve_number",
+    "cn_b": "curve_number",
+    "cn_c": "curve_number",
+    "cn_d": "curve_number",
+    "root_depth": "root_depth",
+    "c_above": "carbon_pools",
+    "c_below": "carbon_pools",
+    "c_soil": "carbon_pools",
+    "c_dead": "carbon_pools",
+}
+_KC_RE = re.compile(r"^kc(_(1[0-2]|[1-9]))?$")
+
+
+def parameter_for_column(column: str) -> str | None:
+    """Which KB parameter file (if any) describes an InVEST table column.
+
+    Case-insensitive. ``kc`` and ``kc_1``..``kc_12`` map to ``kc``; everything
+    else is a fixed lookup. Returns ``None`` for a column the KB has no bearing
+    on (``lucode``, ``description``, ``is_tropical``, ...)."""
+    c = column.strip().lower()
+    if c in _COLUMN_TO_PARAM:
+        return _COLUMN_TO_PARAM[c]
+    if _KC_RE.match(c):
+        return "kc"
+    return None
+
+
+def column_ranges() -> dict[str, dict]:
+    """Lowercased InVEST column -> ``{"parameter", "resource", "typical": [lo, hi]}``.
+
+    The ``typical`` band is the KB parameter's own ``typical_range`` -- a dict
+    keyed by sub-parameter for NDR / carbon, a scalar ``[lo, hi]`` otherwise. It
+    is the cited-literature range, meant for a **soft** out-of-band warning, not
+    a hard bound. Columns whose parameter file gives no usable band are omitted.
+    """
+    cache: dict[str, dict] = {}
+    cols = (
+        list(_COLUMN_TO_PARAM)
+        + ["kc"]
+        + [f"kc_{m}" for m in range(1, 13)]
+    )
+    out: dict[str, dict] = {}
+    for col in cols:
+        param = parameter_for_column(col)
+        if not param:
+            continue
+        payload = cache.get(param)
+        if payload is None:
+            try:
+                payload = cache[param] = _param_payload(param)
+            except FileNotFoundError:  # pragma: no cover - files always shipped
+                continue
+        tr = payload.get("typical_range")
+        band = tr.get(col if col in tr else col.lower()) if isinstance(tr, dict) else tr
+        if not (isinstance(band, list) and len(band) == 2
+                and all(isinstance(x, (int, float)) for x in band)):
+            continue
+        out[col] = {
+            "parameter": param,
+            "resource": f"invest://coefficients/{param}",
+            "typical": [band[0], band[1]],
+        }
+    return out
 
 
 def index() -> str:

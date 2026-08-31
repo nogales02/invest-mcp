@@ -37,6 +37,15 @@ def test_compare_scenarios_playbook_defaults_render():
     assert "align_raster_stack" in out
 
 
+def test_fill_biophysical_table_playbook_substitutes_and_points_at_the_kb():
+    out = prompts.fill_biophysical_table("ndr", project_root="C:/proj/x")
+    assert "{model_id}" not in out and "{project_root}" not in out
+    assert "**ndr**" in out and "`C:/proj/x`" in out
+    assert "tables_from_template" in out
+    assert "invest://coefficients" in out
+    assert "check_table_vs_raster" in out
+
+
 def test_prompt_register_is_wired(monkeypatch):
     seen = []
 
@@ -46,7 +55,11 @@ def test_prompt_register_is_wired(monkeypatch):
             return lambda fn: fn
 
     prompts.register(FakeServer())
-    assert set(seen) == {"prepare_and_run_model", "compare_land_use_scenarios"}
+    assert set(seen) == {
+        "prepare_and_run_model",
+        "compare_land_use_scenarios",
+        "fill_biophysical_table",
+    }
 
 
 def test_resource_register_is_wired():

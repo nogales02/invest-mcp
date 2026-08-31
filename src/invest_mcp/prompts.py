@@ -81,6 +81,52 @@ vs. reforestation) and measure the difference. Work in {root}.
 """
 
 
+def fill_biophysical_table(model_id: str = "sdr", project_root: str = "") -> str:
+    root = f"`{project_root}`" if project_root else "a project folder you pick with the user"
+    return f"""\
+# Playbook — fill the **{model_id}** biophysical / lookup table from cited coefficients
+
+Turn the blank skeleton into a table with real, *sourced* numbers. Work in
+{root}. The coefficients are a judgement call — surface every source and every
+uncertainty to the user; never invent a value.
+
+1. **Know the columns.** Read `invest://model/{model_id}/cheatsheet` for what the
+   table feeds. `describe_invest_model("{model_id}")` if you need the exact arg
+   name and the conditional columns (e.g. NDR's `load_n` only when `calc_n`).
+2. **Skeleton.** `tables_from_template("{model_id}", lulc_path=..., dst_path="tables/…csv",
+   legend_path=...)`. Keep its `column_help` (about / units / requirement) and
+   `classes` (each land-cover code + pixel count) in view.
+3. **Open the knowledge base.** Read `invest://coefficients` for the catalog,
+   then `invest://coefficients/<parameter>` for each column you must fill
+   (`usle_c`, `usle_p`, `ndr_nutrient`, `curve_number`, `kc`, `root_depth`,
+   `carbon_pools`). Read `invest://coefficients/readme` once for how records are
+   organised.
+4. **Match each land-cover class to a record — by meaning, not by code.** For
+   every class, look at its real-world cover (with the user / the legend) and
+   match it against each record's `cover` attributes: vegetation `form`,
+   `canopy_density`, `condition`, `management`, and the record's `context`
+   (`biome`, `region`, `spatial_scale`). The `crosswalk` field is advisory
+   only — do not key off it.
+5. **Pick the value.** Prefer a source whose biome / region / scale is closest
+   to the study site; note the `confidence` and `caveats`. When records
+   disagree, tell the user the spread and why, and pick with them. For monthly
+   Kc (SWY) use `invest://coefficients/moorabool_fs28` → `kc_monthly` only as a
+   *shape* reference (temperate seasonal); re-derive for the site's climate.
+6. **Write the cells** into the CSV. Leave a conditional column blank only if
+   that calculation is off. Keep `lucode` and any `description` column intact.
+7. **Record provenance.** In `logs/`, one line per class per parameter:
+   value, `source_key`, and the full citation from
+   `invest://coefficients/sources`. This is what makes the run defensible.
+8. **Check.** `check_table_vs_raster("{model_id}", table_path=..., lulc_path=...)`.
+   Fix every `error` (missing rows/columns, empty required cells, invariant
+   violations). For each `warning` under `ranges.out_of_typical`, either justify
+   the value in `logs/` (cite why the site is outside the usual band) or correct
+   it. Re-run until `severity` is `ok` or every warning is explained.
+9. **Hand off.** The table is now ready for `validate_invest_args("{model_id}", args)`
+   → `run_invest_model`. Ask the user to eyeball the final CSV first.
+"""
+
+
 def register(server) -> None:
     server.prompt(
         name="prepare_and_run_model",
@@ -94,3 +140,10 @@ def register(server) -> None:
         description="Run one InVEST model under two land-cover maps and measure "
                     "the difference with compare_scenarios.",
     )(compare_land_use_scenarios)
+    server.prompt(
+        name="fill_biophysical_table",
+        title="Fill a biophysical table from cited coefficients",
+        description="From the tables_from_template skeleton to a sourced, "
+                    "range-checked biophysical / lookup table using the "
+                    "invest://coefficients knowledge base and check_table_vs_raster.",
+    )(fill_biophysical_table)

@@ -10,13 +10,14 @@
                    fetch_landcover, fetch_climate, fetch_soil,
                    fetch_hydrography, reproject_layer, clip_to_aoi,
                    align_raster_stack, delineate_watersheds,
-                   tables_from_template
+                   tables_from_template, check_table_vs_raster
     datastack      import_datastack, export_datastack
     admin          invest_env, allow_input_dir
 
 Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
-invest://conventions, invest://data-sources) and prompts (prepare_and_run_model,
-compare_land_use_scenarios) registered from invest_mcp.resources / .prompts.
+invest://conventions, invest://data-sources, invest://coefficients) and prompts
+(prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table)
+registered from invest_mcp.resources / .prompts.
 
 Everything returns plain JSON-able dicts so the client gets structured output.
 """
@@ -34,6 +35,7 @@ from invest_mcp.config import get_settings
 from invest_mcp.execution.jobs import TERMINAL, JobStore
 from invest_mcp.execution.runner import JobRunner, _tail
 from invest_mcp.geo import client as geo_client
+from invest_mcp.knowledge import coefficients as coeff_kb
 from invest_mcp.models import registry
 from invest_mcp.models import spec_translate
 from invest_mcp.workspace import artifacts
@@ -1270,6 +1272,30 @@ def import_datastack(src_path: str) -> dict[str, Any]:
     return result
 
 
+def _choose_table_arg(canonical: str, table_specs: dict,
+                      table_arg: str) -> tuple[str | None, dict | None]:
+    """Pick which CSV arg to work on: the one named, else the sole `lucode`-keyed
+    table. Returns `(chosen, None)` or `(None, error_dict)`."""
+    if table_arg:
+        if table_arg not in table_specs:
+            return None, {"ok": False,
+                          "error": f"{canonical} has no CSV arg {table_arg!r}; "
+                                   f"options: {sorted(table_specs)}"}
+        return table_arg, None
+    lucode_keyed = [a for a, v in table_specs.items() if v["index_col"] == "lucode"]
+    if len(lucode_keyed) == 1:
+        return lucode_keyed[0], None
+    if not lucode_keyed:
+        return None, {"ok": False,
+                      "error": f"{canonical} has no land-cover-keyed table; its CSV "
+                               f"inputs are keyed by "
+                               f"{ {a: v['index_col'] for a, v in table_specs.items()} }. "
+                               "Pass table_arg explicitly."}
+    return None, {"ok": False,
+                  "error": f"{canonical} has several land-cover-keyed tables "
+                           f"({lucode_keyed}); pass table_arg to choose one."}
+
+
 def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
                          table_arg: str = "", legend_path: str = "",
                          include_optional: bool = True,
@@ -1301,25 +1327,9 @@ def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
     if not table_specs:
         return {"ok": False, "error": f"{canonical} takes no CSV table inputs"}
 
-    if table_arg:
-        if table_arg not in table_specs:
-            return {"ok": False, "error": f"{canonical} has no CSV arg {table_arg!r}; "
-                                          f"options: {sorted(table_specs)}"}
-        chosen = table_arg
-    else:
-        lucode_keyed = [a for a, v in table_specs.items() if v["index_col"] == "lucode"]
-        if len(lucode_keyed) == 1:
-            chosen = lucode_keyed[0]
-        elif not lucode_keyed:
-            return {"ok": False,
-                    "error": f"{canonical} has no land-cover-keyed table; its CSV "
-                             f"inputs are keyed by "
-                             f"{ {a: v['index_col'] for a, v in table_specs.items()} }. "
-                             "Pass table_arg explicitly."}
-        else:
-            return {"ok": False,
-                    "error": f"{canonical} has several land-cover-keyed tables "
-                             f"({lucode_keyed}); pass table_arg to choose one."}
+    chosen, err = _choose_table_arg(canonical, table_specs, table_arg)
+    if err:
+        return err
 
     key_col = table_specs[chosen]["index_col"] or "lucode"
     columns = table_specs[chosen]["columns"]
@@ -1386,6 +1396,116 @@ def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
         "classes": classes,
         "column_help": tpl["column_help"],
         "notes": tpl["notes"] + ([info["note"]] if info.get("note") else []),
+        "narrative": narrative,
+    }
+
+
+def check_table_vs_raster(model_id: str, table_path: str, lulc_path: str = "",
+                          table_arg: str = "", include_optional: bool = True,
+                          max_classes: int = 1000) -> dict[str, Any]:
+    """Check a *filled* biophysical / lookup CSV before a run: structure against
+    the model's MODEL_SPEC, coverage against the land-cover raster, and every
+    numeric value against the cited-coefficient typical ranges
+    (`invest://coefficients`).
+
+    Reports, under `checks`:
+      - `coverage` (needs `lulc_path`): raster classes with no row
+        (`missing_rows`), rows for codes not in the raster (`orphan_rows`),
+        duplicate key rows.
+      - `columns`: `missing` required headers, `unexpected` extras.
+      - `cells`: `empty_required` cells, `non_numeric` values in coefficient
+        columns.
+      - `ranges`: `invariant_violations` (hard: fractions in [0,1], curve
+        numbers ordered and in (0,100], loads/depths >= 0) and `out_of_typical`
+        (soft: outside the cited literature band, with the source `resource`).
+
+    `severity` is `error` (a blocker), `warning` (review it) or `ok`; `pass` is
+    `severity != "error"`. `table_arg` picks the CSV when a model has several
+    (same rule as `tables_from_template`). `lulc_path` is optional — omit it to
+    check structure and values only; supplying it needs the `invest-geo` env.
+    """
+    try:
+        canonical = registry.resolve_model_id(model_id)
+        spec = registry.get_spec(canonical)
+    except registry.UnknownModelError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    table_specs = spec_translate.table_arg_specs(spec)
+    if not table_specs:
+        return {"ok": False, "error": f"{canonical} takes no CSV table inputs"}
+
+    chosen, err = _choose_table_arg(canonical, table_specs, table_arg)
+    if err:
+        return err
+
+    key_col = table_specs[chosen]["index_col"] or "lucode"
+    columns = table_specs[chosen]["columns"]
+
+    roots = _SETTINGS.allowed_roots()
+    try:
+        table = str(resolve_input_path(table_path, roots))
+        lulc = str(resolve_input_path(lulc_path, roots)) if lulc_path else ""
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        text = Path(table).read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        return {"ok": False, "error": f"could not read table_path: {exc}"}
+
+    raster_codes = None
+    truncated = False
+    if lulc:
+        try:
+            res = geo_client.run_raster_classes(lulc, _SETTINGS, max_classes=int(max_classes))
+        except RuntimeError as exc:
+            return {"ok": False, "env_missing": True, "error": str(exc)}
+        if not res.get("ok"):
+            return {"ok": False, "model_id": canonical, **res}
+        info = (res.get("outputs") or [{}])[0]
+        raster_codes = [c["value"] for c in info.get("classes", [])]
+        truncated = bool(info.get("truncated"))
+
+    report = biotable.check_table(
+        key_col, columns, text,
+        raster_codes=raster_codes,
+        column_ranges=coeff_kb.column_ranges(),
+        include_optional=bool(include_optional),
+    )
+
+    c = report["checks"]
+    cov = c["coverage"]
+    bits = []
+    if cov.get("missing_rows"):
+        bits.append(f"{len(cov['missing_rows'])} raster class(es) with no row")
+    if cov.get("orphan_rows"):
+        bits.append(f"{len(cov['orphan_rows'])} row(s) for absent codes")
+    if c["columns"]["missing"]:
+        bits.append(f"{len(c['columns']['missing'])} missing required column(s)")
+    if c["cells"]["empty_required"]:
+        bits.append(f"{len(c['cells']['empty_required'])} empty required cell(s)")
+    if c["cells"]["non_numeric"]:
+        bits.append(f"{len(c['cells']['non_numeric'])} non-numeric coefficient(s)")
+    if c["ranges"]["invariant_violations"]:
+        bits.append(f"{len(c['ranges']['invariant_violations'])} invariant violation(s)")
+    if c["ranges"]["out_of_typical"]:
+        bits.append(f"{len(c['ranges']['out_of_typical'])} value(s) outside the cited range")
+    narrative = (
+        f"`{Path(table).name}` for **{spec.get('model_title') or canonical}** "
+        f"(`{chosen}`): {report['severity'].upper()}"
+        + (" — " + "; ".join(bits) if bits else " — nothing flagged")
+        + ("." if not truncated else " (raster class list truncated).")
+    )
+
+    return {
+        "ok": True,
+        "model_id": canonical,
+        "table_arg": chosen,
+        "key_column": key_col,
+        "table": table,
+        "raster_classes": raster_codes,
+        "raster_class_list_truncated": truncated,
+        **report,
         "narrative": narrative,
     }
 
@@ -1601,6 +1721,7 @@ _TOOLS = [
     align_raster_stack,
     delineate_watersheds,
     tables_from_template,
+    check_table_vs_raster,
     import_datastack,
     export_datastack,
     validate_calibration_config,
