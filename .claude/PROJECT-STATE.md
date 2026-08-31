@@ -1,4 +1,4 @@
-# invest-mcp — curated project-state snapshot (2026-08-31, rev 11)
+# invest-mcp — curated project-state snapshot (2026-08-31, rev 12)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
@@ -6,24 +6,49 @@ distilled state.
 
 ## ⟳ RESUME POINT (2026-08-31) — read this first
 
-**Latest work: `docs/MANUAL-HERRAMIENTAS.md` (PR #20, merged, `main` = `849b18a`)**
-— a help-style reference (Spanish) for the full MCP surface: **36 tools, 7
-resources, 4 prompts**. Per-tool fiche in 11 groups (signature, parameter table
-with required/optional/default/meaning, return fields, JSON example, gotchas) +
-base concepts (`args`, why never pass `workspace_dir`, sandbox/allow-list, the 5
-job states, `provenance.json`, datastack, the 3 envs) + a typical-flow ASCII
-diagram + a 4-recipe cookbook + a troubleshooting table + a glossary. Hand-built
-from `src/invest_mcp/{tools,resources,prompts}.py`. Cross-referenced from
-`README.md` (under `## Tools`) and `CLAUDE.md` (`docs/` listing). Docs only, no
-code touched, no tests run. **Keep it in sync when a tool changes.**
+**Latest work: H3 — conditional table columns resolved from model `args`
+(PR #22, merged, `main` = `a72c138`).** `tables_from_template` and
+`check_table_vs_raster` gained an optional `args` parameter (the InVEST `args`
+dict you plan to run with). Helper `tools._table_conditions` maps each table
+column's string `required` condition (NDR's `calc_n` / `calc_p`, etc.) to a
+bool, **only** for conditions actually present as keys in `args`. In
+`workspace/biotable.py`, `_requirement_label` + a `conditions` param on
+`build_template` / `check_table`: a condition resolved `True` makes its columns
+hard-`required` (absent → `missing`, blank → `empty_required`); resolved
+`False` drops them (not required, not flagged `unexpected`); a condition not in
+`args` is unchanged — advisory, listed under `conditional_columns`.
+`check_table` also returns `enforced_conditions`. **Without `args`, behaviour is
+identical to before.** Motivation: the full suite test found an NDR biophysical
+table with no `load_type_n` / `load_type_p` passing `check_table_vs_raster` as
+`ok`, then `invest validate` / the run failing. Verified against the real InVEST
+3.20.1 NDR MODEL_SPEC. +7 tests (`test_biotable` +2, `test_check_table` +5).
+Docs updated (`CLAUDE.md` tool table + structure notes, `MANUAL-HERRAMIENTAS.md`).
+Also in PR #22: tree cleanup — `.claude/settings.json` and `_suite_test/` added
+to `.gitignore`, `PROJECT-STATE.md` bumped to rev 11.
+
+**Full suite: 220 tests — 214 pass + 6 skip** (`pytest -q`; the 6 skips are
+numpy helpers absent from the `.venv`). Restart the MCP client to load the new
+`args` parameter.
+
+Prior work: **`docs/MANUAL-HERRAMIENTAS.md` (PR #20, merged)** — a help-style
+reference (Spanish) for the full MCP surface: **36 tools, 7 resources, 4
+prompts**. Per-tool fiche in 11 groups (signature, parameter table with
+required/optional/default/meaning, return fields, JSON example, gotchas) + base
+concepts (`args`, why never pass `workspace_dir`, sandbox/allow-list, the 5 job
+states, `provenance.json`, datastack, the 3 envs) + a typical-flow ASCII diagram
++ a 4-recipe cookbook + a troubleshooting table + a glossary. Hand-built from
+`src/invest_mcp/{tools,resources,prompts}.py`. Cross-referenced from `README.md`
+(under `## Tools`) and `CLAUDE.md` (`docs/` listing). **Keep it in sync when a
+tool changes.**
 
 **Everything below is committed & merged into `main`** — the 11-branch data-prep
-stack plus PRs #14–#20 (coefficient KB, `check_table_vs_raster` +
+stack plus PRs #14–#22 (coefficient KB, `check_table_vs_raster` +
 `fill_biophysical_table`, `recommend_model` + `invest://model-guide`,
-`clone_job`, `build_report`, `aggregate_to_units`, this manual). `main` is at
-`849b18a`; `gh` CLI is NOT installed — merges go through the GitHub REST API with
-the git credential-manager token, branch deletes via `git push origin --delete`.
-Working tree clean apart from an untracked `.claude/settings.json`.
+`clone_job`, `build_report`, `aggregate_to_units`, the manual, PR #21
+`results_suffix` fixes, PR #22 H3). `main` is at `a72c138`; `gh` CLI is NOT
+installed — merges go through the GitHub REST API with the git credential-manager
+token, branch deletes via the REST API (`DELETE /git/refs/heads/<branch>`) or
+`git push origin --delete`. Working tree clean.
 
 Prior work: **`aggregate_to_units` `[tool]` (#36) + `geo/aggregate.py`** (PR #19,
 merged) — roll one or more ecosystem-service rasters up to reporting-unit
