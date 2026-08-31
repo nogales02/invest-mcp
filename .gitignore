@@ -8,6 +8,7 @@ dist/
 .env
 # Claude Code machine-local settings
 .claude/settings.local.json
+.claude/settings.json
 # local job workspaces if placed inside the repo
 _workspaces/
 invest-mcp-data/
@@ -15,6 +16,9 @@ invest-mcp-data/
 # large local test dataset (dummy InVEST case)
 Dummy_InVEST/
 Dummy_InVEST.zip
+
+# local end-to-end suite-test artifacts (observed CSVs, patched tables, run reports)
+_suite_test/
 
 # local source workbook for the coefficient knowledge base (see knowledge/coefficients/sources.json)
 FS28-Moorabool_MasterFile.xlsx
