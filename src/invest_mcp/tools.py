@@ -7,7 +7,7 @@
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
     data prep      scaffold_project, project_readiness, reproject_layer,
-                   clip_to_aoi, align_raster_stack
+                   clip_to_aoi, align_raster_stack, delineate_watersheds
     admin          invest_env, allow_input_dir
 
 Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
@@ -743,6 +743,53 @@ def align_raster_stack(rasters: list[dict], reference_path: str = "",
     return {"ok": bool(res.get("ok")), "reference": ref, **res}
 
 
+def delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
+                         threshold_flow_accumulation: float = 1000,
+                         snap_distance_px: int = 10, fill_pits: bool = True,
+                         keep_intermediate: bool = False) -> dict[str, Any]:
+    """Cut watershed polygons upstream of a set of outlet points, using the D8
+    routing chain from `pygeoprocessing` -- the same engine InVEST uses, so the
+    basins line up with how SDR / NDR / SWY route internally.
+
+    Pipeline: fill pits -> D8 flow direction -> flow accumulation -> stream
+    network (`threshold_flow_accumulation` pixels) -> snap each outlet to the
+    nearest stream pixel within `snap_distance_px` -> delineate.
+
+    `dem_path`: a projected DEM (metres). `outlets_path`: a point vector; it is
+    reprojected to the DEM's CRS automatically. `dst_path`: where to write the
+    watersheds vector (`.gpkg` / `.shp` / `.geojson`). Intermediates go in
+    `<dst_stem>_hydro/` next to it and are deleted unless `keep_intermediate`.
+    `snap_distance_px=0` disables snapping. All paths must sit under an allowed
+    folder. Needs the `invest-geo` conda env.
+    """
+    roots = _SETTINGS.allowed_roots()
+    try:
+        dem = str(resolve_input_path(dem_path, roots))
+        outlets = str(resolve_input_path(outlets_path, roots))
+        dst = str(resolve_output_path(dst_path, roots))
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        thr = float(threshold_flow_accumulation)
+        snap = int(snap_distance_px)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "threshold_flow_accumulation and "
+                                      "snap_distance_px must be numbers"}
+    if thr <= 0:
+        return {"ok": False, "error": "threshold_flow_accumulation must be > 0"}
+    if snap < 0:
+        return {"ok": False, "error": "snap_distance_px must be >= 0"}
+
+    try:
+        res = geo_client.run_delineate_watersheds(
+            dem, outlets, dst, _SETTINGS,
+            threshold_flow_accumulation=thr, snap_distance_px=snap,
+            fill_pits=bool(fill_pits), keep_intermediate=bool(keep_intermediate))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    return {"ok": bool(res.get("ok")), "dem": dem, "outlets": outlets, "dst": dst, **res}
+
+
 def project_readiness(root: str, models: list[str] | None = None) -> dict[str, Any]:
     """Report which InVEST models a scaffolded project could attempt now and
     which required inputs are still missing.
@@ -947,6 +994,7 @@ _TOOLS = [
     reproject_layer,
     clip_to_aoi,
     align_raster_stack,
+    delineate_watersheds,
     validate_calibration_config,
     run_calibration,
     get_calibration_job,

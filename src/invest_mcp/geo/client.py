@@ -309,35 +309,44 @@ def run_comparison(
 
 
 # ---------------------------------------------------------------------------
-# deterministic data prep (reproject / clip / align) -- pure dispatch here; the
-# GDAL work runs in invest_mcp.geo.prep inside the invest-geo env.
+# deterministic data prep (reproject / clip / align / watershed delineation) --
+# pure dispatch here; the GDAL work runs in a worker module inside the
+# invest-geo env.
 # ---------------------------------------------------------------------------
 _PREP_TIMEOUT_S = 1800
+_HYDRO_TIMEOUT_S = 3600
 
 
-def _run_prep(payload: dict, settings: Settings) -> dict:
-    """Shell out to the prep worker in the invest-geo env. Raises RuntimeError
-    only if that env is missing (callers treat it as 'unavailable')."""
+def _run_geo_worker(module: str, payload: dict, settings: Settings, *,
+                    timeout: int, label: str) -> dict:
+    """Shell out to ``python -m <module>`` in the invest-geo env, JSON over
+    stdin/stdout. Raises RuntimeError only if that env is missing (callers treat
+    it as 'unavailable')."""
     geo_python = settings.resolved_geo_python  # RuntimeError if absent
     try:
         proc = subprocess.run(
-            [str(geo_python), "-m", "invest_mcp.geo.prep"],
+            [str(geo_python), "-m", module],
             input=json.dumps(payload),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            env=geo_subprocess_env(geo_python), timeout=_PREP_TIMEOUT_S,
+            env=geo_subprocess_env(geo_python), timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"prep op exceeded {_PREP_TIMEOUT_S}s"}
+        return {"ok": False, "error": f"{label} exceeded {timeout}s"}
 
     if proc.returncode != 0 and not proc.stdout.strip():
         return {"ok": False,
-                "error": (proc.stderr or "prep worker exited non-zero").strip()[-2000:]}
+                "error": (proc.stderr or f"{label} worker exited non-zero").strip()[-2000:]}
     try:
         return json.loads(proc.stdout)
     except json.JSONDecodeError:
         return {"ok": False,
                 "error": f"worker returned non-JSON. stdout={proc.stdout[:800]!r} "
                          f"stderr={proc.stderr[:800]!r}"}
+
+
+def _run_prep(payload: dict, settings: Settings) -> dict:
+    return _run_geo_worker("invest_mcp.geo.prep", payload, settings,
+                           timeout=_PREP_TIMEOUT_S, label="prep op")
 
 
 def run_reproject(src: str, dst: str, target_crs: str, settings: Settings, *,
@@ -363,3 +372,20 @@ def run_align_stack(rasters: list[dict], settings: Settings, *,
                       "reference": reference, "target_crs": target_crs,
                       "resolution": resolution, "extent": extent,
                       "resampling": resampling}, settings)
+
+
+def run_delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
+                             settings: Settings, *,
+                             threshold_flow_accumulation: float = 1000,
+                             snap_distance_px: int = 10,
+                             fill_pits: bool = True,
+                             keep_intermediate: bool = False) -> dict:
+    return _run_geo_worker("invest_mcp.geo.hydro", {
+        "dem_path": dem_path,
+        "outlets_path": outlets_path,
+        "dst_path": dst_path,
+        "threshold_flow_accumulation": threshold_flow_accumulation,
+        "snap_distance_px": snap_distance_px,
+        "fill_pits": fill_pits,
+        "keep_intermediate": keep_intermediate,
+    }, settings, timeout=_HYDRO_TIMEOUT_S, label="watershed delineation")
