@@ -191,6 +191,23 @@ def test_build_report_toggles_off_sections(tmp_path, monkeypatch):
     assert "### Results" in md                            # summary still there
 
 
+def test_read_invest_summary_csv_plain_and_suffixed(tmp_path):
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    # no file yet
+    assert tools._read_invest_summary_csv(str(ws)) is None
+    # a results_suffix run only writes the suffixed name
+    (ws / "raster_values_summary_baseline.csv").write_text(
+        "Raster,Total,Units\nBaseline carbon storage,4061555.98,Mg\n",
+        encoding="utf-8")
+    rows = tools._read_invest_summary_csv(str(ws))
+    assert rows and rows[0]["Total"] == "4061555.98"
+    # the un-suffixed name still wins when both are present
+    (ws / "raster_values_summary.csv").write_text(
+        "Raster,Total,Units\nplain,1,Mg\n", encoding="utf-8")
+    assert tools._read_invest_summary_csv(str(ws))[0]["Raster"] == "plain"
+
+
 def test_build_report_guard_rails(tmp_path, monkeypatch):
     monkeypatch.setattr(tools._STORE, "get", lambda i: None)
     monkeypatch.setattr(tools, "resolve_output_path", lambda p, roots: Path(p))
