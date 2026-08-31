@@ -7,7 +7,7 @@
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
     data prep      scaffold_project, project_readiness, fetch_dem,
-                   fetch_landcover, fetch_climate, reproject_layer,
+                   fetch_landcover, fetch_climate, fetch_soil, reproject_layer,
                    clip_to_aoi, align_raster_stack, delineate_watersheds,
                    tables_from_template
     admin          invest_env, allow_input_dir
@@ -954,6 +954,78 @@ def fetch_climate(dst_path: str, variable: str, aoi_path: str = "",
     return {"ok": bool(res.get("ok")), "aoi": aoi, **res}
 
 
+def fetch_soil(dst_path: str, variable: str, aoi_path: str = "",
+               bbox: list[float] | None = None, source: str = "soilgrids",
+               depth: str = "0-5cm", stat: str = "mean", target_crs: str = "",
+               target_resolution: list[float] | None = None,
+               clip_to_aoi: bool = True, buffer_deg: float = 0.05,
+               resampling: str = "", keep_intermediate: bool = False) -> dict[str, Any]:
+    """Download soil rasters for an area of interest and land them as GeoTIFFs.
+
+    Source (`source="soilgrids"`, the only one wired up): **SoilGrids 2.0**
+    (ISRIC, 250 m, no credentials). Contacts `files.isric.org` only. The global
+    grids are in Interrupted Goode Homolosine; they are warped to lon/lat and
+    windowed to the AOI before any reprojection you ask for.
+
+    `variable`:
+      - `"texture"` -> sand / silt / clay fraction (percent by weight). Three
+        rasters, so `dst_path` MUST contain `{fraction}`, e.g.
+        `.../soil_{fraction}.tif` -> `soil_sand.tif`, `soil_silt.tif`,
+        `soil_clay.tif`.
+      - `"hydrologic_soil_group"` -> HSG `1..4` (A..D) for Seasonal Water Yield /
+        Urban Flood Risk / Stormwater. Derived from the USDA texture class only
+        (a documented approximation). uint8, nodata 0; `resampling` defaults to
+        `nearest`.
+      - `"usle_k"` -> soil erodibility K for SDR, in SI units
+        (t.ha.h.ha-1.MJ-1.mm-1), via the Williams / EPIC (1995) pedotransfer
+        equation from sand/silt/clay/SOC. float32.
+
+    `depth` is one of `0-5cm` (default), `5-15cm`, `15-30cm`, `30-60cm`,
+    `60-100cm`, `100-200cm`; `stat` is `mean` (default), `Q0.05`, `Q0.5` or
+    `Q0.95`. Give the area as `aoi_path` and/or `bbox` `[minx,miny,maxx,maxy]`
+    in lon/lat degrees. `target_crs` / `target_resolution` reproject onto the
+    project grid; with `clip_to_aoi` the result is masked to the polygon.
+    Writes under `dst_path`'s folder (must be allowed). Needs the `invest-geo` env.
+    """
+    if variable not in ("texture", "hydrologic_soil_group", "usle_k"):
+        return {"ok": False, "error": "variable must be 'texture', "
+                                      "'hydrologic_soil_group' or 'usle_k'"}
+    if (source or "soilgrids") != "soilgrids":
+        return {"ok": False, "error": "only source='soilgrids' (SoilGrids 2.0) is wired up"}
+    if depth not in ("0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm", "100-200cm"):
+        return {"ok": False, "error": "depth must be one of 0-5cm, 5-15cm, 15-30cm, "
+                                      "30-60cm, 60-100cm, 100-200cm"}
+    if stat not in ("mean", "Q0.05", "Q0.5", "Q0.95"):
+        return {"ok": False, "error": "stat must be one of mean, Q0.05, Q0.5, Q0.95"}
+    if variable == "texture" and "{fraction}" not in dst_path:
+        return {"ok": False, "error": "variable='texture' needs '{fraction}' in dst_path, "
+                                      "e.g. .../soil_{fraction}.tif"}
+    if not aoi_path and not bbox:
+        return {"ok": False, "error": "provide aoi_path or bbox [minx,miny,maxx,maxy] (lon/lat)"}
+    if bbox is not None and len(bbox) != 4:
+        return {"ok": False, "error": "bbox must be [minx, miny, maxx, maxy] in lon/lat degrees"}
+
+    roots = _SETTINGS.allowed_roots()
+    probe = dst_path.replace("{fraction}", "sand")
+    try:
+        resolve_output_path(probe, roots)                    # folder must be allowed
+        aoi = str(resolve_input_path(aoi_path, roots)) if aoi_path else None
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        res = geo_client.run_fetch_soil(
+            dst_path, variable, _SETTINGS, source="soilgrids", depth=depth, stat=stat,
+            bbox_wgs84=[float(v) for v in bbox] if bbox else None,
+            aoi_path=aoi, clip_to_aoi=bool(clip_to_aoi), buffer_deg=float(buffer_deg),
+            target_crs=(str(target_crs) or None), target_resolution=target_resolution,
+            resampling=(resampling or None),
+            keep_intermediate=bool(keep_intermediate))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    return {"ok": bool(res.get("ok")), "aoi": aoi, **res}
+
+
 def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
                          table_arg: str = "", legend_path: str = "",
                          include_optional: bool = True,
@@ -1278,6 +1350,7 @@ _TOOLS = [
     fetch_dem,
     fetch_landcover,
     fetch_climate,
+    fetch_soil,
     reproject_layer,
     clip_to_aoi,
     align_raster_stack,

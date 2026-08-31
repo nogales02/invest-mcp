@@ -432,6 +432,24 @@ def run_fetch_climate(dst_path: str, variable: str, settings: Settings, *,
     }, settings, timeout=_FETCH_TIMEOUT_S, label="climate fetch")
 
 
+def run_fetch_soil(dst_path: str, variable: str, settings: Settings, *,
+                   source: str = "soilgrids", depth: str = "0-5cm",
+                   stat: str = "mean",
+                   bbox_wgs84: list[float] | None = None,
+                   aoi_path: str | None = None, clip_to_aoi: bool = True,
+                   buffer_deg: float = 0.05, target_crs: str | None = None,
+                   target_resolution: list[float] | None = None,
+                   resampling: str | None = None,
+                   keep_intermediate: bool = False) -> dict:
+    return _run_geo_worker("invest_mcp.geo.soil", {
+        "variable": variable, "source": source, "depth": depth, "stat": stat,
+        "dst_path": dst_path, "bbox_wgs84": bbox_wgs84, "aoi_path": aoi_path,
+        "clip_to_aoi": bool(clip_to_aoi), "buffer_deg": buffer_deg,
+        "target_crs": target_crs, "target_resolution": target_resolution,
+        "resampling": resampling, "keep_intermediate": bool(keep_intermediate),
+    }, settings, timeout=_FETCH_TIMEOUT_S, label="soil fetch")
+
+
 def run_delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
                              settings: Settings, *,
                              threshold_flow_accumulation: float = 1000,

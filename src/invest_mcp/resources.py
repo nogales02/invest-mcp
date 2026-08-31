@@ -79,7 +79,7 @@ Global Aridity & ET0 Database (CGIAR-CSI); TerraClimate `pet`; or compute
 ## Soil
 | Source | Notes |
 |---|---|
-| SoilGrids 250 m (ISRIC) | Sand/silt/clay, SOC, depth to bedrock. Derive PAWC, K-factor, hydrologic soil group. |
+| SoilGrids 250 m (ISRIC) | Sand/silt/clay, SOC, depth to bedrock. Derive PAWC, K-factor, hydrologic soil group. **Wired: `fetch_soil` (`variable=texture` / `hydrologic_soil_group` / `usle_k`).** |
 | HWSD v2 (FAO) | Harmonised World Soil Database. |
 | FutureWater HiHydroSoil v2 | Ready-made hydraulic properties incl. hydrologic soil group. |
 
