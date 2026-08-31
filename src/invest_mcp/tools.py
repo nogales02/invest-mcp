@@ -3,7 +3,7 @@
     inventory      list_invest_models, describe_invest_model
     validation     validate_invest_args
     execution      run_invest_model, get_invest_job, get_invest_job_logs,
-                   list_invest_jobs, cancel_invest_job
+                   list_invest_jobs, cancel_invest_job, clone_job
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
     data prep      scaffold_project, project_readiness, fetch_dem,
@@ -289,6 +289,92 @@ def cancel_invest_job(job_id: str) -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
     out = job.public_dict()
     out["ok"] = True
+    return out
+
+
+def _clone_args(base_args: dict, overrides: dict | None,
+                drop_args: list[str] | None) -> tuple[dict, dict]:
+    """Apply `drop_args` then `overrides` to a copy of `base_args`. Returns
+    `(new_args, diff)` where diff is `{arg: {"from": old, "to": new|None}}` for
+    every arg that actually changed. `workspace_dir` is always stripped."""
+    args = dict(base_args)
+    args.pop("workspace_dir", None)
+    overrides = {k: v for k, v in dict(overrides or {}).items() if k != "workspace_dir"}
+    drop = [a for a in (drop_args or []) if a != "workspace_dir"]
+
+    diff: dict[str, dict] = {}
+    for name in drop:
+        if name in args:
+            diff[name] = {"from": args.pop(name), "to": None}
+    for name, new in overrides.items():
+        old = args.get(name)
+        if name not in args or old != new:
+            diff[name] = {"from": old, "to": new}
+        args[name] = new
+    return args, diff
+
+
+def clone_job(job_id: str, overrides: dict | None = None,
+              drop_args: list[str] | None = None,
+              wait_seconds: int = 0) -> dict[str, Any]:
+    """Re-run a previous InVEST job with some arguments changed.
+
+    Lifts the model and `args` from `job_id`'s datastack, applies `overrides`
+    (a dict merged over the args — sets or adds) and `drop_args` (arg names to
+    remove), then submits a fresh run the same way `run_invest_model` does
+    (sandbox + input-path checks included). `workspace_dir` is always stripped
+    (server-managed). The common use is swapping one input — e.g. a scenario
+    LULC — and feeding the baseline and clone `job_id`s to `compare_scenarios`.
+
+    Returns the new job plus `cloned_from`, `source_status`, and a `diff`
+    (`{arg: {"from": old, "to": new}}`, `to` is `null` for a dropped arg). The
+    source job can be in any state; nothing about the original is modified.
+    """
+    src = _STORE.get(job_id)
+    if src is None:
+        return {"ok": False, "error": f"No such job: {job_id}"}
+
+    dsp = Path(src.datastack_path)
+    if not dsp.is_file():
+        return {"ok": False,
+                "error": f"job {job_id} has no datastack on disk; its args cannot "
+                         "be recovered. Rebuild them with describe_invest_model."}
+    try:
+        stack = json.loads(dsp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": f"could not read job datastack: {exc}"}
+
+    model_id = stack.get("model_id") or src.model_id
+    base_args, diff = _clone_args(stack.get("args", {}), overrides, drop_args)
+
+    if not diff:
+        return {"ok": False,
+                "error": "clone would be identical to the source; pass overrides= "
+                         "and/or drop_args= to change something."}
+
+    try:
+        job = _RUNNER.submit(model_id, base_args)
+    except SandboxError as exc:
+        return {"ok": False, "error": f"input path rejected: {exc}"}
+    except registry.UnknownModelError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    if wait_seconds and wait_seconds > 0:
+        job = _RUNNER.wait(job.id, min(wait_seconds, 3600))
+
+    out = job.public_dict()
+    out["ok"] = True
+    out["cloned_from"] = job_id
+    out["source_status"] = src.status
+    out["diff"] = diff
+    out["arg_count"] = len(base_args)
+    out["unchanged_arg_count"] = len(base_args) - sum(
+        1 for v in diff.values() if v["to"] is not None
+    )
+    out["hint"] = (
+        "poll get_invest_job(job_id); then compare_scenarios("
+        f"'{job_id}', '{job.id}', aoi_path=...) for the trade-off"
+    )
     return out
 
 
@@ -1707,6 +1793,7 @@ _TOOLS = [
     get_invest_job_logs,
     list_invest_jobs,
     cancel_invest_job,
+    clone_job,
     list_invest_job_artifacts,
     summarize_results,
     compare_scenarios,
