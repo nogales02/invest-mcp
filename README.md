@@ -78,6 +78,11 @@ boundary — never point it at a drive root.
 
 ## Tools
 
+> **Full manual** (every tool, resource and prompt — signature, parameters,
+> return fields, example, gotchas; plus base concepts, the typical flow, a
+> cookbook and a troubleshooting table; Spanish):
+> [docs/MANUAL-HERRAMIENTAS.md](docs/MANUAL-HERRAMIENTAS.md).
+
 | Tool | Purpose |
 |---|---|
 | `invest_env` | Confirm InVEST is reachable; show paths/version and which sidecars are available. |
