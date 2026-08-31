@@ -148,6 +148,7 @@ environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
 environment-server.yml  env conda "invest-mcp" (python+pip) para el servidor sin Python del sistema
 scripts/             bootstrap.ps1 (Windows) / bootstrap.sh (POSIX): elige server env (.venv o conda invest-mcp) + pip + setup + doctor + mcp-config
 docs/                INSTALACION-PASO-A-PASO.md  guía "para dummies" (ES): de cero a Claude conectado (+ §5.c: pilotar el MCP con Ollama / Qwen vía mcphost)
+                     MANUAL-HERRAMIENTAS.md      referencia tipo "help" (ES) de las 36 tools + 7 resources + 4 prompts: ficha por tool (firma, params, devuelve, ejemplo, trampas) + conceptos base + flujo + cookbook + errores frecuentes + glosario
 INSTALL.md           referencia terse: prereqs + snippets de config por cliente + seguridad
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_calibration_tools, test_summarize, test_compare,
