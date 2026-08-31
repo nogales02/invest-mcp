@@ -813,7 +813,7 @@ snap de cada outlet a la red → `delineate_watersheds_d8`.
 
 ### 3.9 Tablas biofísicas / lookup
 
-#### `tables_from_template(model_id, lulc_path, dst_path, table_arg="", legend_path="", include_optional=True, max_classes=1000)`
+#### `tables_from_template(model_id, lulc_path, dst_path, table_arg="", legend_path="", include_optional=True, args=None, max_classes=1000)`
 🗺️
 
 **Qué hace.** Escribe el **esqueleto** de una tabla biofísica/lookup: una fila
@@ -830,11 +830,12 @@ Las celdas de coeficiente van **en blanco** para que las rellenes.
 | `table_arg` | ✖ | auto | Qué CSV templetar (p.ej. `biophysical_table_path`). Auto-detecta el que va por `lucode`; si hay varios, el error los lista. |
 | `legend_path` | ✖ | `""` | CSV con `code,label` en las 2 primeras columnas → añade columna `description`. |
 | `include_optional` | ✖ | `true` | Emitir también columnas solo-opcionales. Las **condicionales** (p.ej. `load_n` de NDR con `calc_n`) se emiten siempre y se marcan en `column_help`. |
+| `args` | ✖ | `null` | El dict `args` con el que vas a correr. Si lo pasas, las columnas condicionales se resuelven contra él: `{"calc_n": true, "calc_p": false}` emite `load_type_n`/`load_n`/… como `required` y **descarta** las columnas de fósforo. Sin `args`, todas se emiten como `required if: <cond>`. |
 | `max_classes` | ✖ | `1000` | Corta la lista de clases. |
 
 **Devuelve.** `headers`, `column_help` (about / units / requirement por
-columna), `classes` (valor + nº de píxeles), `key_column`, `notes`, `narrative`.
-Expande `[MONTH]` → `_1..12` y `[SOIL_GROUP]` → `_a..d`.
+columna), `classes` (valor + nº de píxeles), `key_column`, `resolved_conditions`,
+`notes`, `narrative`. Expande `[MONTH]` → `_1..12` y `[SOIL_GROUP]` → `_a..d`.
 
 **Ejemplo.**
 ```json
@@ -845,7 +846,7 @@ tables_from_template("carbon",
 
 ---
 
-#### `check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="", include_optional=True, max_classes=1000)`
+#### `check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="", include_optional=True, args=None, max_classes=1000)`
 🗺️ (solo si pasas `lulc_path`)
 
 **Qué hace.** Valida una tabla biofísica/lookup **rellena** antes de correr.
@@ -871,9 +872,11 @@ tables_from_template("carbon",
 | `lulc_path` | ✖ | `""` | Sin él: solo estructura + valores (no necesita `invest-geo`). Con él: + cobertura. |
 | `table_arg` | ✖ | auto | Igual regla que `tables_from_template`. |
 | `include_optional` | ✖ | `true` | |
+| `args` | ✖ | `null` | El dict `args` con el que vas a correr. Resuelve las columnas condicionales del modelo: con `{"calc_n": true}` las columnas de NDR `load_type_n`/`load_n`/`eff_n`/`crit_len_n`/`proportion_subsurface_n` pasan a **required duras** (faltan → `missing`, en blanco → `empty_required`); con `{"calc_p": false}` las de fósforo se ignoran. Las condiciones no nombradas en `args` quedan como aviso (`conditional_columns`). |
 
 **Devuelve.** `severity` (`error` bloqueante / `warning` revisar / `ok`), `pass`
-(= `severity != error`), `checks` (detalle), `narrative`.
+(= `severity != error`), `checks` (detalle), `conditional_columns`,
+`enforced_conditions` (las que activó `args`), `narrative`.
 
 **Notas.** Cierra el lazo: `tables_from_template` → rellenar desde
 `invest://coefficients` → `check_table_vs_raster` → `validate_invest_args`. El

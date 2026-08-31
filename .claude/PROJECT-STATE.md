@@ -1,4 +1,4 @@
-# invest-mcp — curated project-state snapshot (2026-08-31, rev 10)
+# invest-mcp — curated project-state snapshot (2026-08-31, rev 11)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
@@ -6,14 +6,33 @@ distilled state.
 
 ## ⟳ RESUME POINT (2026-08-31) — read this first
 
-**Latest work: `aggregate_to_units` `[tool]` (#36) + `geo/aggregate.py`** (runs
-in `invest-geo`) — roll one or more ecosystem-service rasters up to
-reporting-unit polygons (municipal boundaries, cadastral parcels, intervention
-footprints). Input is a path, or a list of paths / `{path, label?, units?,
-value_per_unit?}` dicts — a `diff_*.tif` from `compare_scenarios` is the usual
-case ("what does this land-use change buy each unit?"). Per unit×raster it
-computes `stats` (sum/mean/count/min/max/std/median, default sum/mean/count) over
-the pixels whose centre falls in the polygon (`all_touched` = any-touch), and
+**Latest work: `docs/MANUAL-HERRAMIENTAS.md` (PR #20, merged, `main` = `849b18a`)**
+— a help-style reference (Spanish) for the full MCP surface: **36 tools, 7
+resources, 4 prompts**. Per-tool fiche in 11 groups (signature, parameter table
+with required/optional/default/meaning, return fields, JSON example, gotchas) +
+base concepts (`args`, why never pass `workspace_dir`, sandbox/allow-list, the 5
+job states, `provenance.json`, datastack, the 3 envs) + a typical-flow ASCII
+diagram + a 4-recipe cookbook + a troubleshooting table + a glossary. Hand-built
+from `src/invest_mcp/{tools,resources,prompts}.py`. Cross-referenced from
+`README.md` (under `## Tools`) and `CLAUDE.md` (`docs/` listing). Docs only, no
+code touched, no tests run. **Keep it in sync when a tool changes.**
+
+**Everything below is committed & merged into `main`** — the 11-branch data-prep
+stack plus PRs #14–#20 (coefficient KB, `check_table_vs_raster` +
+`fill_biophysical_table`, `recommend_model` + `invest://model-guide`,
+`clone_job`, `build_report`, `aggregate_to_units`, this manual). `main` is at
+`849b18a`; `gh` CLI is NOT installed — merges go through the GitHub REST API with
+the git credential-manager token, branch deletes via `git push origin --delete`.
+Working tree clean apart from an untracked `.claude/settings.json`.
+
+Prior work: **`aggregate_to_units` `[tool]` (#36) + `geo/aggregate.py`** (PR #19,
+merged) — roll one or more ecosystem-service rasters up to reporting-unit
+polygons (municipal boundaries, cadastral parcels, intervention footprints).
+Input is a path, or a list of paths / `{path, label?, units?, value_per_unit?}`
+dicts — a `diff_*.tif` from `compare_scenarios` is the usual case ("what does
+this land-use change buy each unit?"). Per unit×raster it computes `stats`
+(sum/mean/count/min/max/std/median, default sum/mean/count) over the pixels
+whose centre falls in the polygon (`all_touched` = any-touch), and
 `val_<label>` = `value_per_unit`·sum — the simple $ valuation InVEST does not
 carry, a global default with a per-raster override. `area_weighted` multiplies
 each pixel by its area in hectares first (for a per-ha density raster; ignored
@@ -26,8 +45,7 @@ end-to-end (.venv → subprocess → invest-geo) on the real carbon job's
 the already-verified `summarize_results` zonal exactly; `sum` 3,880,246.53 (<
 InVEST total 4,061,555.98 — the subbasin doesn't cover the whole raster);
 `val` = sum·50 = 194,012,326.60. `Basin.shp` + `all_touched` → 77,672 px.
-+15 tests (`test_aggregate.py`). Full suite **203 passed, 6 skipped**.
-Not committed.
++15 tests (`test_aggregate.py`). Full suite **209 tests (203 pass + 6 skip)**.
 
 Prior work: **`build_report` `[tool]` (#35) + `workspace/report.py`** — a
 methods + results memo (**Markdown**) for one or more jobs, assembled from what
@@ -43,7 +61,7 @@ dst_path.md, include_args/provenance/artifacts/comparisons=True)`. Convert the
 Verified end-to-end on the real carbon jobs (baseline + deforestation scenario):
 the memo's numbers match `raster_values_summary.csv` (4,061,555.98) and
 `compare_scenarios` (Δ −130,285.96, −3.2%, 1,717 px ↓). +12 tests
-(`test_report.py`). Full suite **188 passed, 6 skipped**.
+(`test_report.py`). (PR #18, merged.)
 Also: **`docs/INSTALACION-PASO-A-PASO.md` new §5.c** — driving the MCP with a
 local model via **Ollama** (`mcphost` + Qwen: a model with `tools`, a large
 `num_ctx`, the identical `mcpServers` block; `ollmcp` alternative; caveats about
@@ -94,7 +112,7 @@ tool 33; `_choose_table_arg` extracted and shared with `tables_from_template`.
 end-to-end vs `Dummy_InVEST`: clean carbon table → warning (3 orphan rows);
 combined SDR calibration table → 46 columns flagged not-in-spec + `usle_c=0`
 below the cited floor; a deliberately broken table → all four planted defects.
-**Not committed.**
+(PR #15, merged.)
 
 Prior session: the **cited-coefficient knowledge base** (`[resource]`, roadmap
 item 10) — `src/invest_mcp/knowledge/coefficients/`, 7 parameter files
@@ -109,7 +127,7 @@ biome, region, scale), not one land-cover legend; `crosswalk` hints advisory
 only; every value carries `source_key` + `confidence` + `verified`
 (`web`/`excel`/`standard`). Pure-stdlib loader `knowledge/coefficients.py`; two
 new resources (`invest://coefficients`, `invest://coefficients/{name}`); 11 new
-tests. **Not committed.**
+tests. (PR #14, merged.)
 
 Prior long sessions: the **data-preparation layer** (roadmap 8–10) then the
 **Workbench hand-off** + hydrography + a soil refinement, then `clone_job` +
@@ -125,10 +143,11 @@ InVEST carries no money figure. Pure helper `_aggregate_raster_specs`. Writes
 the units vector back out (one column per (raster, stat) + `val_*`), a tidy CSV
 and a `<dst>_aggregate.json` sidecar. Verified end-to-end on the real carbon
 job's `c_storage_bas.tif` + `SubBasin.shp`: `count` 76,650 and `mean` 50.62
-match the already-verified `summarize_results` zonal exactly. +15 tests. Not
-committed.
+match the already-verified `summarize_results` zonal exactly. +15 tests.
+(PR #19, merged.)
 
-**The 11-branch stack is MERGED into `main`** (2026-08-30). `main` = `8a56650`
+**The 11-branch stack is MERGED into `main`** (2026-08-30). Original `main` =
+`8a56650`
 (`origin/main`), 11 bottom-up merge commits (PRs #2, #12, #4, #5, #6, #7, #8, #1,
 #9, #10, #11 — the original #3 auto-closed when its base branch was deleted and
 was recreated as #12). Every feature branch deleted, local and `origin`; only
@@ -155,12 +174,15 @@ failed`) → `_read_bdticm` retries 4×. HydroSHEDS (`data.hydrosheds.org`) was
 fast & reliable but **blocks HEAD** → `CPL_VSIL_CURL_USE_HEAD=NO`. Not code
 bugs; retry a hung `fetch_*` (worker timeout 1800 s).
 
-**Next candidates** (CLAUDE.md §6): extend the coefficient KB (NDR
-`eff`/`crit_len` outside semi-arid tropics, C/P for more regions, per-output
-units, glossary); `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`), HSG
-refined with Ksat/depth; `fetch_climate` `source=terraclimate|chirps`;
-`aggregate_to_units`; `compare_scenarios_multi`; `export_map`;
-`run_uncertainty`.
+**Next candidates** (CLAUDE.md §6): `compare_scenarios_multi` (N scenarios × N
+services trade-off table + ranking — rounds out the deliverables layer, reuses
+`compare_scenarios` + `clone_job`, no matplotlib dependency); `export_map`
+(GeoTIFF → PNG/GeoPDF with legend/basemap/AOI — needs a working render path,
+matplotlib is broken in the conda envs on this machine); `fetch_climate`
+`source=terraclimate|chirps` (real years, netCDF); `fetch_soil` PAWC
+(SoilGrids 2017 `AWCh1..3`/`WWP`), HSG refined with Ksat/depth; extend the
+coefficient KB (NDR `eff`/`crit_len` outside semi-arid tropics, C/P for more
+regions, per-output units, glossary); `run_uncertainty` (MC over coefficients).
 
 ## What the project is
 
@@ -215,7 +237,7 @@ SDK: `mcp` 2.x — `FastMCP` was renamed to `MCPServer`
   writes a numpy JSON first and renders the image in a separate process that can
   crash without taking the run down. Images render fine on Workbench/CI/Linux.
 
-## Tool surface — 35 MCP tools (+ 7 resources, 4 prompts)
+## Tool surface — 36 MCP tools (+ 7 resources, 4 prompts)
 
 Env/discovery: `invest_env`, `allow_input_dir`.
 Model introspection: `list_invest_models`, `describe_invest_model`,
@@ -224,9 +246,12 @@ Runs: `run_invest_model`, `get_invest_job`, `get_invest_job_logs`,
 `list_invest_jobs`, `cancel_invest_job`, `clone_job` (re-run a previous job's
 datastack args with `overrides` / `drop_args` → feeds `compare_scenarios`),
 `list_invest_job_artifacts`, `summarize_results`, `compare_scenarios`,
-`build_report` (Markdown methods + results memo for 1+ jobs, collated from
-`provenance.json` / the artifact catalog / the summarize & compare sidecars;
-stdlib, no `invest-geo`).
+`aggregate_to_units` (zonal roll-up of 1+ service rasters — or a `diff_*.tif`
+from `compare_scenarios` — to reporting-unit polygons, with a flat per-unit $
+valuation; rewrites the units vector + a tidy CSV + a `<dst>_aggregate.json`
+sidecar; `invest-geo`), `build_report` (Markdown methods + results memo for 1+
+jobs, collated from `provenance.json` / the artifact catalog / the summarize &
+compare sidecars; stdlib, no `invest-geo`).
 Data prep (`invest-geo` subprocess unless noted): `scaffold_project` (stdlib),
 `project_readiness` (stdlib), `fetch_dem` (Copernicus GLO-30), `fetch_landcover`
 (ESA WorldCover), `fetch_climate` (WorldClim precip + Hargreaves ETo),
@@ -495,7 +520,11 @@ with `overrides` / `drop_args`; feeds `compare_scenarios`. **Rev 8→9:**
 `build_report` `[tool]` (#35) + `workspace/report.py` — Markdown methods +
 results memo collated from job artifacts / provenance / the summarize & compare
 sidecars; `docs/INSTALACION-PASO-A-PASO.md` §5.c (drive the MCP with Ollama /
-Qwen).
+Qwen). **Rev 9→10:** `aggregate_to_units` `[tool]` (#36) + `geo/aggregate.py`
+(PR #19) — zonal roll-up of service rasters / `compare_scenarios` diffs to
+reporting-unit polygons with a flat per-unit valuation. **Rev 10→11:**
+`docs/MANUAL-HERRAMIENTAS.md` (PR #20) — help-style reference for all 36 tools +
+7 resources + 4 prompts.
 
 **Still open** (CLAUDE.md §6 has the full tagged list):
 1. More `fetch_*`: `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) +
@@ -508,9 +537,10 @@ Qwen).
    (`check_table_vs_raster` against it is done — rev 5→6.)
 3. Datastack "archive" (`.invest.tar.gz` with the data bundled in).
    (`clone_job` is done — rev 7→8.)
-4. Output side: `compare_scenarios_multi`, `aggregate_to_units`, `export_map`,
-   `run_uncertainty` (MC over coefficients). (`build_report` is done — rev 8→9;
-   pending: native HTML/PDF instead of via pandoc, embed the PNGs.)
+4. Output side: `compare_scenarios_multi`, `export_map`, `run_uncertainty` (MC
+   over coefficients). (`build_report` done — rev 8→9, pending: native HTML/PDF
+   instead of via pandoc, embed the PNGs. `aggregate_to_units` done — rev 9→10,
+   pending: nested sub-units, per-price-table valuation instead of a constant.)
 5. Content-addressed run cache by input hash; JSON Schema snapshots + CI diff for
    InVEST version bumps; `estimate_run_cost`; `manage_workspaces`.
 6. `conda-lock` (win-64/linux-64/osx-arm64) + Docker (Linux, `invest` from

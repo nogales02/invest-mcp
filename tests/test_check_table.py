@@ -19,6 +19,10 @@ NDR_COLS = [
     {"id": "eff_n", "about": "N retention", "required": "calc_n", "units": None},
     {"id": "note", "about": "free text", "required": False, "units": None},
 ]
+NDR_COLS_FULL = NDR_COLS + [
+    {"id": "load_type_n", "about": "load mode", "required": "calc_n", "units": None},
+    {"id": "load_p", "about": "P load", "required": "calc_p", "units": None},
+]
 
 
 def _check(cols, csv_text, codes=None, **kw):
@@ -115,6 +119,53 @@ def test_conditional_columns_are_reported_not_required():
     out = _check(NDR_COLS, csv_text, codes=[10])
     assert set(out["conditional_columns"]) == {"load_n", "eff_n"}
     assert out["severity"] == "ok"          # nothing missing/blank/out of range
+    assert out["enforced_conditions"] == []
+
+
+# ---------------------------------------------------------------------------
+# conditions resolved from the model args (H3: NDR load_type_* columns)
+# ---------------------------------------------------------------------------
+def test_active_condition_makes_a_missing_conditional_column_an_error():
+    csv_text = "lucode,load_n,eff_n\n10,5,0.3\n"          # no load_type_n
+    out = _check(NDR_COLS_FULL, csv_text, codes=[10], conditions={"calc_n": True})
+    assert out["severity"] == "error" and out["pass"] is False
+    assert "load_type_n" in out["checks"]["columns"]["missing"]
+    assert out["enforced_conditions"] == ["calc_n"]
+
+
+def test_active_condition_makes_a_blank_conditional_cell_an_error():
+    csv_text = "lucode,load_n,eff_n,load_type_n\n10,5,0.3,\n"   # blank load_type_n
+    out = _check(NDR_COLS_FULL, csv_text, codes=[10], conditions={"calc_n": True})
+    assert out["severity"] == "error"
+    assert {"row": "10", "column": "load_type_n"} in out["checks"]["cells"]["empty_required"]
+
+
+def test_inactive_condition_drops_columns_from_required_and_unexpected():
+    # calc_p off: load_p present but not required, and not flagged unexpected
+    csv_text = "lucode,load_n,eff_n,load_type_n,load_p\n10,5,0.3,application,\n"
+    out = _check(NDR_COLS_FULL, csv_text, codes=[10],
+                 conditions={"calc_n": True, "calc_p": False})
+    assert out["severity"] == "ok" and out["pass"] is True
+    assert out["checks"]["columns"]["unexpected"] == []
+    assert "load_p" not in out["conditional_columns"]
+
+
+def test_unlisted_condition_stays_advisory():
+    csv_text = "lucode,load_n,eff_n,load_type_n\n10,5,0.3,application\n"
+    out = _check(NDR_COLS_FULL, csv_text, codes=[10], conditions={"calc_n": True})
+    assert "load_p" in out["conditional_columns"]        # calc_p not mentioned
+    assert out["severity"] == "ok"
+
+
+def test_table_conditions_helper_reads_calc_flags_from_args():
+    cols = [{"id": "load_n", "required": "calc_n"},
+            {"id": "load_p", "required": "calc_p"},
+            {"id": "usle_c", "required": True}]
+    assert tools._table_conditions(cols, {"calc_n": True, "calc_p": False}) == {
+        "calc_n": True, "calc_p": False}
+    assert tools._table_conditions(cols, {"calc_n": True}) == {"calc_n": True}
+    assert tools._table_conditions(cols, None) == {}
+    assert tools._table_conditions(cols, {"something_else": 1}) == {}
 
 
 # ---------------------------------------------------------------------------

@@ -1728,9 +1728,21 @@ def _choose_table_arg(canonical: str, table_specs: dict,
                            f"({lucode_keyed}); pass table_arg to choose one."}
 
 
+def _table_conditions(columns: list[dict], args: dict | None) -> dict[str, bool]:
+    """Resolve each column's string ``required`` condition against a model `args`
+    dict: ``{condition: bool}``, one entry per condition that is actually named
+    as a key in ``args`` (e.g. NDR's ``calc_n`` / ``calc_p``). Conditions not
+    mentioned in ``args`` are left out -- they stay advisory."""
+    if not args:
+        return {}
+    conds = {c["required"] for c in columns if isinstance(c.get("required"), str)}
+    return {c: bool(args.get(c)) for c in conds if c in args}
+
+
 def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
                          table_arg: str = "", legend_path: str = "",
                          include_optional: bool = True,
+                         args: dict[str, Any] | None = None,
                          max_classes: int = 1000) -> dict[str, Any]:
     """Write a skeleton biophysical / lookup table CSV for `model_id`: one row
     per unique land-cover code in `lulc_path`, with the header columns that
@@ -1745,6 +1757,11 @@ def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
     `include_optional`: also emit columns that are only optionally required.
       Conditionally-required columns (e.g. NDR's `load_n` when `calc_n`) are
       always emitted and flagged in `column_help`.
+    `args`: the model `args` you plan to run with. When given, conditional
+      columns are resolved against it -- e.g. `{"calc_n": true, "calc_p":
+      false}` emits `load_type_n`/`load_n`/... as hard `required` and drops the
+      phosphorus columns entirely. Without `args` every conditional column is
+      emitted and flagged `required if: <cond>`.
     `[MONTH]` / `[SOIL_GROUP]` placeholder columns are expanded (`kc_1..kc_12`,
     `cn_a..cn_d`); other `[TOKEN]`s are left literal with a note.
     Needs the `invest-geo` env to read the raster's classes.
@@ -1794,9 +1811,11 @@ def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
         except OSError as exc:
             return {"ok": False, "error": f"could not read legend_path: {exc}"}
 
+    conditions = _table_conditions(columns, args)
     tpl = biotable.build_template(key_col, columns, lucodes,
                                   descriptions=descriptions,
-                                  include_optional=bool(include_optional))
+                                  include_optional=bool(include_optional),
+                                  conditions=conditions or None)
     try:
         Path(dst).write_text(tpl["csv"], encoding="utf-8")
     except OSError as exc:
@@ -1805,6 +1824,15 @@ def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
     n_req = sum(1 for h in tpl["column_help"].values() if h["requirement"] == "required")
     n_cond = sum(1 for h in tpl["column_help"].values()
                  if h["requirement"].startswith("required if"))
+    on = sorted(k for k, v in conditions.items() if v)
+    off = sorted(k for k, v in conditions.items() if not v)
+    cond_bits = ""
+    if on or off:
+        cond_bits = (
+            " Conditions from `args`: "
+            + ", ".join([f"{k}=on" for k in on] + [f"{k}=off" for k in off])
+            + (f" ({', '.join(off)} columns dropped)." if off else ".")
+        )
     narrative = (
         f"Wrote `{Path(dst).name}` for **{spec.get('model_title') or canonical}** "
         f"(`{chosen}`): {len(tpl['headers'])} columns "
@@ -1812,7 +1840,8 @@ def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
         + (", + optional" if include_optional else "")
         + f"), {len(lucodes)} rows — one per land-cover code "
         f"{', '.join(str(c) for c in lucodes[:12])}"
-        + ("…" if len(lucodes) > 12 else "") + ". "
+        + ("…" if len(lucodes) > 12 else "") + "."
+        + cond_bits + " "
         + ("Class list truncated to the most common values. "
            if info.get("truncated") else "")
         + "Fill the blank coefficient cells (see `column_help`)."
@@ -1827,6 +1856,7 @@ def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
         "row_count": len(lucodes),
         "classes": classes,
         "column_help": tpl["column_help"],
+        "resolved_conditions": conditions,
         "notes": tpl["notes"] + ([info["note"]] if info.get("note") else []),
         "narrative": narrative,
     }
@@ -1834,6 +1864,7 @@ def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
 
 def check_table_vs_raster(model_id: str, table_path: str, lulc_path: str = "",
                           table_arg: str = "", include_optional: bool = True,
+                          args: dict[str, Any] | None = None,
                           max_classes: int = 1000) -> dict[str, Any]:
     """Check a *filled* biophysical / lookup CSV before a run: structure against
     the model's MODEL_SPEC, coverage against the land-cover raster, and every
@@ -1855,6 +1886,14 @@ def check_table_vs_raster(model_id: str, table_path: str, lulc_path: str = "",
     `severity != "error"`. `table_arg` picks the CSV when a model has several
     (same rule as `tables_from_template`). `lulc_path` is optional — omit it to
     check structure and values only; supplying it needs the `invest-geo` env.
+
+    `args`: the model `args` you plan to run with. When given, the model's
+    conditional columns are resolved against it — e.g. with `{"calc_n": true}`
+    NDR's `load_type_n`/`load_n`/`eff_n`/`crit_len_n`/`proportion_subsurface_n`
+    become hard-required (absent → `missing`, blank → `empty_required`), and
+    with `{"calc_p": false}` the phosphorus columns are ignored. Conditions not
+    named in `args` stay advisory (listed under `conditional_columns`).
+    `enforced_conditions` echoes which ones were switched on.
     """
     try:
         canonical = registry.resolve_model_id(model_id)
@@ -1898,11 +1937,13 @@ def check_table_vs_raster(model_id: str, table_path: str, lulc_path: str = "",
         raster_codes = [c["value"] for c in info.get("classes", [])]
         truncated = bool(info.get("truncated"))
 
+    conditions = _table_conditions(columns, args)
     report = biotable.check_table(
         key_col, columns, text,
         raster_codes=raster_codes,
         column_ranges=coeff_kb.column_ranges(),
         include_optional=bool(include_optional),
+        conditions=conditions or None,
     )
 
     c = report["checks"]
@@ -1922,10 +1963,17 @@ def check_table_vs_raster(model_id: str, table_path: str, lulc_path: str = "",
         bits.append(f"{len(c['ranges']['invariant_violations'])} invariant violation(s)")
     if c["ranges"]["out_of_typical"]:
         bits.append(f"{len(c['ranges']['out_of_typical'])} value(s) outside the cited range")
+    enforced = report.get("enforced_conditions") or []
+    dropped = sorted(k for k, v in conditions.items() if not v)
+    cond_bit = ""
+    if enforced or dropped:
+        parts = [f"{k} enforced" for k in enforced] + [f"{k} off" for k in dropped]
+        cond_bit = f" [conditions: {', '.join(parts)}]"
     narrative = (
         f"`{Path(table).name}` for **{spec.get('model_title') or canonical}** "
         f"(`{chosen}`): {report['severity'].upper()}"
         + (" — " + "; ".join(bits) if bits else " — nothing flagged")
+        + cond_bit
         + ("." if not truncated else " (raster class list truncated).")
     )
 
