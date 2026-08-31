@@ -7,7 +7,8 @@
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
     data prep      scaffold_project, project_readiness, reproject_layer,
-                   clip_to_aoi, align_raster_stack, delineate_watersheds
+                   clip_to_aoi, align_raster_stack, delineate_watersheds,
+                   tables_from_template
     admin          invest_env, allow_input_dir
 
 Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
@@ -33,6 +34,7 @@ from invest_mcp.geo import client as geo_client
 from invest_mcp.models import registry
 from invest_mcp.models import spec_translate
 from invest_mcp.workspace import artifacts
+from invest_mcp.workspace import biotable
 from invest_mcp.workspace import project as project_layout
 from invest_mcp.workspace import readiness as readiness_mod
 from invest_mcp.workspace.sandbox import (
@@ -790,6 +792,126 @@ def delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
     return {"ok": bool(res.get("ok")), "dem": dem, "outlets": outlets, "dst": dst, **res}
 
 
+def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
+                         table_arg: str = "", legend_path: str = "",
+                         include_optional: bool = True,
+                         max_classes: int = 1000) -> dict[str, Any]:
+    """Write a skeleton biophysical / lookup table CSV for `model_id`: one row
+    per unique land-cover code in `lulc_path`, with the header columns that
+    model's table needs (straight from its MODEL_SPEC). Coefficient cells are
+    left blank for you to fill.
+
+    `table_arg`: which CSV input to template (e.g. `biophysical_table_path`).
+      Default: auto-detect the one keyed by `lucode`; if the model has several,
+      the error lists them so you can pick.
+    `legend_path`: optional CSV whose first two columns are `code,label`; adds a
+      `description` column pre-filled from it (InVEST ignores extra columns).
+    `include_optional`: also emit columns that are only optionally required.
+      Conditionally-required columns (e.g. NDR's `load_n` when `calc_n`) are
+      always emitted and flagged in `column_help`.
+    `[MONTH]` / `[SOIL_GROUP]` placeholder columns are expanded (`kc_1..kc_12`,
+    `cn_a..cn_d`); other `[TOKEN]`s are left literal with a note.
+    Needs the `invest-geo` env to read the raster's classes.
+    """
+    try:
+        canonical = registry.resolve_model_id(model_id)
+        spec = registry.get_spec(canonical)
+    except registry.UnknownModelError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    table_specs = spec_translate.table_arg_specs(spec)
+    if not table_specs:
+        return {"ok": False, "error": f"{canonical} takes no CSV table inputs"}
+
+    if table_arg:
+        if table_arg not in table_specs:
+            return {"ok": False, "error": f"{canonical} has no CSV arg {table_arg!r}; "
+                                          f"options: {sorted(table_specs)}"}
+        chosen = table_arg
+    else:
+        lucode_keyed = [a for a, v in table_specs.items() if v["index_col"] == "lucode"]
+        if len(lucode_keyed) == 1:
+            chosen = lucode_keyed[0]
+        elif not lucode_keyed:
+            return {"ok": False,
+                    "error": f"{canonical} has no land-cover-keyed table; its CSV "
+                             f"inputs are keyed by "
+                             f"{ {a: v['index_col'] for a, v in table_specs.items()} }. "
+                             "Pass table_arg explicitly."}
+        else:
+            return {"ok": False,
+                    "error": f"{canonical} has several land-cover-keyed tables "
+                             f"({lucode_keyed}); pass table_arg to choose one."}
+
+    key_col = table_specs[chosen]["index_col"] or "lucode"
+    columns = table_specs[chosen]["columns"]
+
+    roots = _SETTINGS.allowed_roots()
+    try:
+        lulc = str(resolve_input_path(lulc_path, roots))
+        dst = str(resolve_output_path(dst_path, roots))
+        legend = str(resolve_input_path(legend_path, roots)) if legend_path else ""
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        res = geo_client.run_raster_classes(lulc, _SETTINGS, max_classes=int(max_classes))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    if not res.get("ok"):
+        return {"ok": False, "model_id": canonical, **res}
+
+    info = (res.get("outputs") or [{}])[0]
+    classes = info.get("classes", [])
+    lucodes = [c["value"] for c in classes]
+    if not lucodes:
+        return {"ok": False, "error": f"no class values found in {lulc}"}
+
+    descriptions = None
+    if legend:
+        try:
+            descriptions = biotable.parse_legend(Path(legend).read_text(encoding="utf-8-sig"))
+        except OSError as exc:
+            return {"ok": False, "error": f"could not read legend_path: {exc}"}
+
+    tpl = biotable.build_template(key_col, columns, lucodes,
+                                  descriptions=descriptions,
+                                  include_optional=bool(include_optional))
+    try:
+        Path(dst).write_text(tpl["csv"], encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "error": f"could not write {dst}: {exc}"}
+
+    n_req = sum(1 for h in tpl["column_help"].values() if h["requirement"] == "required")
+    n_cond = sum(1 for h in tpl["column_help"].values()
+                 if h["requirement"].startswith("required if"))
+    narrative = (
+        f"Wrote `{Path(dst).name}` for **{spec.get('model_title') or canonical}** "
+        f"(`{chosen}`): {len(tpl['headers'])} columns "
+        f"({n_req} required, {n_cond} conditional"
+        + (", + optional" if include_optional else "")
+        + f"), {len(lucodes)} rows — one per land-cover code "
+        f"{', '.join(str(c) for c in lucodes[:12])}"
+        + ("…" if len(lucodes) > 12 else "") + ". "
+        + ("Class list truncated to the most common values. "
+           if info.get("truncated") else "")
+        + "Fill the blank coefficient cells (see `column_help`)."
+    )
+    return {
+        "ok": True,
+        "model_id": canonical,
+        "table_arg": chosen,
+        "dst": dst,
+        "key_column": key_col,
+        "headers": tpl["headers"],
+        "row_count": len(lucodes),
+        "classes": classes,
+        "column_help": tpl["column_help"],
+        "notes": tpl["notes"] + ([info["note"]] if info.get("note") else []),
+        "narrative": narrative,
+    }
+
+
 def project_readiness(root: str, models: list[str] | None = None) -> dict[str, Any]:
     """Report which InVEST models a scaffolded project could attempt now and
     which required inputs are still missing.
@@ -995,6 +1117,7 @@ _TOOLS = [
     clip_to_aoi,
     align_raster_stack,
     delineate_watersheds,
+    tables_from_template,
     validate_calibration_config,
     run_calibration,
     get_calibration_job,

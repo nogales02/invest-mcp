@@ -374,6 +374,11 @@ def run_align_stack(rasters: list[dict], settings: Settings, *,
                       "resampling": resampling}, settings)
 
 
+def run_raster_classes(src: str, settings: Settings, *, max_classes: int = 1000) -> dict:
+    return _run_prep({"op": "raster_classes", "src": src,
+                      "max_classes": max_classes}, settings)
+
+
 def run_delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
                              settings: Settings, *,
                              threshold_flow_accumulation: float = 1000,

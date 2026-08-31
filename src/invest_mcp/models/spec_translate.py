@@ -113,6 +113,45 @@ def path_args(model_spec: dict) -> dict[str, str]:
     }
 
 
+def table_arg_specs(model_spec: dict) -> dict[str, dict]:
+    """Per CSV arg: its key column and the columns InVEST expects.
+
+    ``{arg: {"index_col": str|None, "required": bool|str,
+             "about": str, "columns": [{"id","about","required","units"}]}}``
+
+    ``required`` on a column is ``True``, ``False`` or a **string** (a condition,
+    e.g. ``"calc_n"``). Hidden / disallowed columns are dropped. Column ids may
+    contain a ``[TOKEN]`` placeholder (``kc_[MONTH]``) -- left as-is here.
+    """
+    out: dict[str, dict] = {}
+    for name, s in model_spec.get("args", {}).items():
+        if s.get("type") != "csv":
+            continue
+        raw = s.get("columns")
+        items = (
+            list(raw) if isinstance(raw, list)
+            else [{"id": k, **v} for k, v in raw.items()] if isinstance(raw, dict)
+            else []
+        )
+        cols = [
+            {
+                "id": c.get("id"),
+                "about": (c.get("about") or "").strip(),
+                "required": c.get("required"),
+                "units": c.get("units"),
+            }
+            for c in items
+            if c.get("id") and not c.get("hidden") and c.get("allowed") is not False
+        ]
+        out[name] = {
+            "index_col": s.get("index_col"),
+            "required": s.get("required"),
+            "about": (s.get("about") or "").strip(),
+            "columns": cols,
+        }
+    return out
+
+
 def spatial_arg_specs(model_spec: dict) -> dict[str, dict]:
     """Per spatial-input arg: whether a projected CRS is mandated and its units.
 
