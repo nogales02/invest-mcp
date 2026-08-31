@@ -1,4 +1,4 @@
-# invest-mcp — curated project-state snapshot (2026-08-31, rev 7)
+# invest-mcp — curated project-state snapshot (2026-08-31, rev 8)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
@@ -6,22 +6,34 @@ distilled state.
 
 ## ⟳ RESUME POINT (2026-08-31) — read this first
 
-**Latest work: `recommend_model` `[prompt]` + `invest://model-guide`
-`[resource]`** — from a real-world question to InVEST model(s). The guide (a
-curated markdown resource, generated against `list_models()` → the 26 installed
+**Latest work: `clone_job` `[tool]` (#34)** — re-run a previous InVEST job with
+some args changed. Reads `model_id` + `args` from the source job's
+`datastack.json`, applies `drop_args` (remove) then `overrides` (set/add), and
+submits via the same path as `run_invest_model` (sandbox + input-path checks).
+`workspace_dir` always stripped. Returns the new job + `cloned_from`,
+`source_status`, `diff` (`{arg: {from, to}}`, `to: null` for a dropped arg),
+`arg_count` / `unchanged_arg_count`; the `hint` proposes
+`compare_scenarios(baseline, clone)`. Source job can be any status; the original
+is untouched; errors if the clone would be identical or the datastack is gone.
+Pure core `_clone_args` (10 tests, `test_clone_job.py`); tool guard rails tested
+with `_RUNNER.submit` stubbed. Verified end-to-end: cloned the real succeeded
+carbon job `carbon-20260830T103940-174b40` with
+`overrides={carbon_pools_path: <copy>}` → new job → **succeeded in <60 s** with
+artifacts; `diff` / `arg_count` correct. Full suite **176 passed, 6 skipped**.
+
+Prior work: **`recommend_model` `[prompt]` + `invest://model-guide`
+`[resource]`** (PR #16) — from a real-world question to InVEST model(s). The
+guide (curated markdown, written against `list_models()` → the 26 installed
 models) gives per model: *answers* / *needs* / *gives* / *pair with* / *not
-for*, grouped by domain (terrestrial water & soil, land carbon & habitat,
-urban, coastal & marine, agriculture & pollination, recreation & scenery,
-terrain/scenario tools) plus an "Outside InVEST's scope" section. The prompt
+for*, by domain, plus an "Outside InVEST's scope" section. The prompt
 orchestrates: sharpen the question → `invest://model-guide` +
 `list_invest_models` → shortlist confirmed against the cheat-sheets →
-`project_readiness` for what data exists → recommend (primary + complements,
-inputs tagged available/needs-prep/missing, outputs, baseline-vs-scenario?) →
-hand off to `prepare_and_run_model` / `compare_land_use_scenarios`. +2 tests,
-full suite **166 passed, 6 skipped**. **Not committed.**
+`project_readiness` → recommend → hand off to `prepare_and_run_model` /
+`compare_land_use_scenarios`.
 
 Prior work: **`check_table_vs_raster` `[tool]` + `fill_biophysical_table`
-`[prompt]`** — close the biophysical-table loop on top of the coefficient KB.
+`[prompt]`** (PR #15) — close the biophysical-table loop on top of the
+coefficient KB.
 `check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="")` checks
 a *filled* CSV: `coverage` (raster classes with no row, rows for absent codes,
 duplicate keys — needs `lulc_path` → `invest-geo`), `columns` (missing required,
@@ -57,8 +69,8 @@ new resources (`invest://coefficients`, `invest://coefficients/{name}`); 11 new
 tests. **Not committed.**
 
 Prior long sessions: the **data-preparation layer** (roadmap 8–10) then the
-**Workbench hand-off** + hydrography + a soil refinement. Now **33 MCP tools +
-7 resources + 4 prompts, 172 tests green** (166 pass + 6 skip — numpy helpers
+**Workbench hand-off** + hydrography + a soil refinement. Now **34 MCP tools +
+7 resources + 4 prompts, 182 tests green** (176 pass + 6 skip — numpy helpers
 absent from `.venv`, verified in `invest-geo`).
 
 **The 11-branch stack is MERGED into `main`** (2026-08-30). `main` = `8a56650`
@@ -92,8 +104,8 @@ bugs; retry a hung `fetch_*` (worker timeout 1800 s).
 `eff`/`crit_len` outside semi-arid tropics, C/P for more regions, per-output
 units, glossary); `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`), HSG
 refined with Ksat/depth; `fetch_climate` `source=terraclimate|chirps`;
-`clone_job` (re-run a finished job's args with edits → feeds
-`compare_scenarios`); `build_report`; `aggregate_to_units`.
+`build_report` (methods + results memo); `aggregate_to_units`;
+`compare_scenarios_multi`.
 
 ## What the project is
 
@@ -148,14 +160,15 @@ SDK: `mcp` 2.x — `FastMCP` was renamed to `MCPServer`
   writes a numpy JSON first and renders the image in a separate process that can
   crash without taking the run down. Images render fine on Workbench/CI/Linux.
 
-## Tool surface — 33 MCP tools (+ 7 resources, 4 prompts)
+## Tool surface — 34 MCP tools (+ 7 resources, 4 prompts)
 
 Env/discovery: `invest_env`, `allow_input_dir`.
 Model introspection: `list_invest_models`, `describe_invest_model`,
 `validate_invest_args`, `preflight_geo`.
 Runs: `run_invest_model`, `get_invest_job`, `get_invest_job_logs`,
-`list_invest_jobs`, `cancel_invest_job`, `list_invest_job_artifacts`,
-`summarize_results`, `compare_scenarios`.
+`list_invest_jobs`, `cancel_invest_job`, `clone_job` (re-run a previous job's
+datastack args with `overrides` / `drop_args` → feeds `compare_scenarios`),
+`list_invest_job_artifacts`, `summarize_results`, `compare_scenarios`.
 Data prep (`invest-geo` subprocess unless noted): `scaffold_project` (stdlib),
 `project_readiness` (stdlib), `fetch_dem` (Copernicus GLO-30), `fetch_landcover`
 (ESA WorldCover), `fetch_climate` (WorldClim precip + Hargreaves ETo),
@@ -341,7 +354,16 @@ documents conditionals in the description.
   the guide + `list_invest_models` + `project_readiness`, bare form says "no
   project folder"). `resources.register` now wires `invest://model-guide`;
   `prompts.register` wires `recommend_model`.
-- 172 tests green (166 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
+- **`clone_job`** (2026-08-31) — pure `_clone_args(base_args, overrides,
+  drop_args) → (new_args, diff)` (drops `workspace_dir`, drop before override,
+  a no-op override is not a diff). Tool 34: reads the source job's
+  `datastack.json`, merges, `_RUNNER.submit`. +10 tests (`test_clone_job.py`):
+  `_clone_args` cases + tool guard rails with `_STORE.get` / `_RUNNER.submit`
+  stubbed (unknown job, missing datastack, identical clone → error; the stub
+  receives merged args without `workspace_dir`). End-to-end: cloned the real
+  succeeded `carbon-20260830T103940-174b40` with an overridden
+  `carbon_pools_path` → new job succeeded in <60 s with artifacts.
+- 182 tests green (176 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
   texture triangle, EPIC K — with numpy absent from `.venv`; verified in
   `invest-geo`). Registered and "Connected" in Claude Code as `invest`.
 
@@ -397,6 +419,8 @@ resources). **Rev 5→6:** `check_table_vs_raster` `[tool]` (#33) +
 `tables_from_template` → fill from `invest://coefficients` → `check_table_vs_raster`
 → `validate_invest_args`. **Rev 6→7:** `recommend_model` `[prompt]` +
 `invest://model-guide` `[resource]` — question → model(s) + the data each needs.
+**Rev 7→8:** `clone_job` `[tool]` (#34) — re-run a previous job's datastack args
+with `overrides` / `drop_args`; feeds `compare_scenarios`.
 
 **Still open** (CLAUDE.md §6 has the full tagged list):
 1. More `fetch_*`: `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) +
@@ -407,8 +431,8 @@ resources). **Rev 5→6:** `check_table_vs_raster` `[tool]` (#33) +
 2. Extend the cited-coefficient KB: NDR `eff`/`crit_len` outside semi-arid
    tropics, USLE C/P for more regions/biomes, per-output units, a glossary.
    (`check_table_vs_raster` against it is done — rev 5→6.)
-3. `clone_job` (copy a finished run's args, re-run with edits — feeds
-   `compare_scenarios`); datastack "archive" (`.invest.tar.gz`).
+3. Datastack "archive" (`.invest.tar.gz` with the data bundled in).
+   (`clone_job` is done — rev 7→8.)
 4. Output side: `compare_scenarios_multi`, `aggregate_to_units`, `build_report`
    (methods+results memo), `export_map`, `run_uncertainty` (MC over coefficients).
 5. Content-addressed run cache by input hash; JSON Schema snapshots + CI diff for

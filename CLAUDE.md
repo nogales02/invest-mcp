@@ -124,7 +124,7 @@ src/invest_mcp/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 33 tools MCP + register(server); `_choose_table_arg` (helper compartido por tables_from_template / check_table_vs_raster)
+  tools.py           las 34 tools MCP + register(server); helpers `_choose_table_arg` (tables_from_template / check_table_vs_raster) y `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff)
   resources.py       7 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, guía de modelos = qué modelo responde a qué pregunta, base de coeficientes citados + sus ficheros) + register(server)
   prompts.py         4 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table, recommend_model) + register(server)
   knowledge/
@@ -152,8 +152,9 @@ tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_prep, test_readiness, test_resources_prompts,
                      test_hydro, test_biotable, test_fetch,
                      test_climate, test_soil, test_hydrography,
-                     test_datastack, test_knowledge_coefficients, test_check_table
-                     (172 tests: 166 pass + 6 skip sin numpy)
+                     test_datastack, test_knowledge_coefficients,
+                     test_check_table, test_clone_job
+                     (182 tests: 176 pass + 6 skip sin numpy)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
@@ -171,7 +172,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (33 tools) + 7 resources + 4 prompts
+## 4. Tool surface (34 tools) + 7 resources + 4 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -186,6 +187,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `get_invest_job_logs(job_id, tail_lines=200)` | stdout/stderr capturado. |
 | `list_invest_jobs(limit=20)` | Runs recientes. |
 | `cancel_invest_job(job_id)` | Mata un run en cola o en marcha. |
+| `clone_job(job_id, overrides=None, drop_args=None, wait_seconds=0)` | Re-lanza un job previo con args cambiados. Saca `model_id`+`args` del `datastack.json` del job, aplica `drop_args` (quita) y `overrides` (pone/añade), y hace `submit` por el mismo camino que `run_invest_model` (checks de sandbox + rutas incluidos). Siempre quita `workspace_dir`. Devuelve el job nuevo + `cloned_from`, `source_status`, `diff` (`{arg: {from, to}}`; `to: null` si se quitó), `arg_count`/`unchanged_arg_count`. El job origen puede estar en cualquier estado; no se toca. Uso típico: cambiar el LULC por uno de escenario y pasar baseline + clon a `compare_scenarios`. Error si el clon quedaría idéntico o si el datastack no está en disco. |
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
 | `summarize_results(job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Resumen de un run terminado: stats por ráster de salida (válidos/nodata, min/max/media/std/suma, histograma 10-bins), zonal por feature sobre un AOI vectorial (reproyectado al CRS del ráster), la `raster_values_summary.csv` de InVEST si existe, un digest en lenguaje natural y un PNG de preview del ráster principal (best-effort, subproceso aislado). Escribe `<jobdir>/summary/summary.json`. Necesita el env `invest-geo`. |
 | `compare_scenarios(baseline_job_id, scenario_job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Baseline vs escenario alternativo del **mismo modelo** (el propósito de InVEST — tradeoffs). Por cada ráster de salida presente en ambos runs: alinea el escenario a la malla del baseline (reproyecta si difieren), escribe `diff_<nombre>.tif` = `escenario - baseline`, y reporta total antes/después, Δ y % de cambio, px que suben/bajan/igual, histograma de Δ, zonal de Δ por feature sobre un AOI, digest NL y un PNG de preview con colormap divergente. Escribe `<scen_jobdir>/compare_vs_<baseline_job_id>/compare.json`. Necesita el env `invest-geo`. |
@@ -267,10 +269,19 @@ Convenciones:
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
 8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
 `Dummy_InVEST` o un bbox de los Alpes.
-**33 tools + 7 resources + 4 prompts. 172 tests en verde** (`pytest -q`, 166
+**34 tools + 7 resources + 4 prompts. 182 tests en verde** (`pytest -q`, 176
 pass + 6 skip sin numpy).
 
-**Última sesión (2026-08-31, cont.):** `recommend_model` `[prompt]` +
+**Última sesión (2026-08-31, cont.):** `clone_job` `[tool]` — re-lanza un job
+previo con args cambiados (lee el `datastack.json` del job, aplica
+`drop_args`+`overrides`, `submit` por el camino de `run_invest_model`). Devuelve
+`diff` + `cloned_from` + `source_status`; `hint` propone el `compare_scenarios`.
+Núcleo puro `_clone_args` (10 tests) + guard rails con `_RUNNER.submit` stubeado.
+Verificado end-to-end: clon de un job de carbon real (`carbon-…174b40`,
+succeeded) con `overrides={carbon_pools_path: <copia>}` → job nuevo → **succeeded
+en <60 s** con artefactos; `diff`/`arg_count` correctos.
+
+**Sesión previa (2026-08-31, cont.):** `recommend_model` `[prompt]` +
 `invest://model-guide` `[resource]` — de la pregunta del usuario a modelo(s)
 InVEST. La guía cubre los 26 modelos instalados (answers/needs/gives/pair/
 not-for, por dominio) + qué queda fuera de InVEST; el prompt orquesta
@@ -341,8 +352,8 @@ frágil: una lectura de ventana puede cortarse a media franja
 **Siguientes candidatos** (roadmap §6, "Capacidades pendientes por etapa"):
 `fetch_hydrography` `source="hydrorivers_global"`/HydroBASINS lakes · `fetch_soil`
 PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) y refinar HSG con Ksat+profundidad · `fetch_climate`
-`source="terraclimate"`/`"chirps"` · `clone_job` · `build_report` ·
-`aggregate_to_units` · ampliar el KB de coeficientes (más regiones/biomas,
+`source="terraclimate"`/`"chirps"` · `build_report` · `aggregate_to_units` ·
+`compare_scenarios_multi` · ampliar el KB de coeficientes (más regiones/biomas,
 glosario, unidades por output).
 
 ### Funciona / verificado
@@ -520,7 +531,17 @@ glosario, unidades por output).
   scope"; el prompt sustituye `question`/`project_root`, apunta a
   `invest://model-guide` + `list_invest_models` + `project_readiness`, y su
   forma sin args dice "no project folder".
-- 172 tests en verde (166 pass — + `test_check_table` 17,
+- **`clone_job`** end-to-end (2026-08-31, .venv → invest.exe): clon del job real
+  `carbon-20260830T103940-174b40` (succeeded) con
+  `overrides={carbon_pools_path: <copia de Carbon_Pools.csv>}` → job nuevo
+  `carbon-20260831T015323-17fa42` → **succeeded en <60 s** (`wait_seconds=60`) con
+  artefactos; `diff` = solo `carbon_pools_path` {from,to}, `arg_count` 2,
+  `unchanged_arg_count` 1, `source_status` succeeded. +10 tests
+  (`test_clone_job.py`): `_clone_args` (override pone/añade, drop quita,
+  no-op no cuenta, `workspace_dir` siempre fuera) + guard rails del tool
+  (job inexistente, datastack ausente, clon idéntico → error; submit stubeado
+  recibe los args fusionados sin `workspace_dir`).
+- 182 tests en verde (176 pass — + `test_clone_job` 10, `test_check_table` 17,
   `test_knowledge_coefficients` 11, `test_hydrography` 16, `test_datastack` 15,
   +2 en `test_soil`; 6 skips: helpers numpy — `_ra_mm_per_day`, triángulo
   textural, EPIC K — con numpy ausente del `.venv`; se verifican en
@@ -674,8 +695,11 @@ receta que el LLM sigue y adapta.
   `model_name` legacy; `export` puede sacar modelo+args de un `job_id`;
   `relative=True` para stacks portables. Verificado end-to-end (ver §5).
   Pendiente: datastack "archive" (`.invest.tar.gz` con los datos empaquetados).
-- `[tool]` `clone_job` — copiar los args de un run terminado y re-ejecutar con
-  cambios (alimenta `compare_scenarios`).
+- ~~`[tool]` `clone_job`~~ **HECHO** (2026-08-31) — `tools.py` + helper puro
+  `_clone_args`. Lee `model_id`+`args` del `datastack.json` del job, aplica
+  `drop_args`+`overrides`, `submit` por el camino de `run_invest_model`. Devuelve
+  `diff` + `cloned_from` + `source_status`; el `hint` propone el
+  `compare_scenarios(baseline, clon)`. Verificado end-to-end (ver §5).
 - `[tool]` `explain_provenance` — linaje completo de un resultado desde
   `provenance.json` + los pasos de `prep` que produjeron cada input.
 
