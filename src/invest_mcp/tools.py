@@ -5,7 +5,7 @@
     execution      run_invest_model, get_invest_job, get_invest_job_logs,
                    list_invest_jobs, cancel_invest_job, clone_job
     results        list_invest_job_artifacts, summarize_results,
-                   compare_scenarios, build_report
+                   compare_scenarios, aggregate_to_units, build_report
     data prep      scaffold_project, project_readiness, fetch_dem,
                    fetch_landcover, fetch_climate, fetch_soil,
                    fetch_hydrography, reproject_layer, clip_to_aoi,
@@ -842,6 +842,170 @@ def build_report(job_ids: list[str] | str, dst_path: str, title: str = "",
         "notes": notes,
         "hint": f"convert with: pandoc '{dst.name}' -o report.pdf  (or -o report.html)",
     }
+
+
+# ---------------------------------------------------------------------------
+_AGG_STATS = ("sum", "mean", "count", "min", "max", "std", "median")
+
+
+def _slug(raw: str) -> str:
+    import re
+
+    s = re.sub(r"[^0-9A-Za-z]+", "_", str(raw)).strip("_")
+    return s or "raster"
+
+
+def _aggregate_raster_specs(rasters: Any, value_per_unit: Any = None) -> list[dict]:
+    """Normalise the `rasters` arg into a clean spec list.
+
+    Accepts a single path string, a single `{path, label?, units?,
+    value_per_unit?}` dict, or a list mixing those. A top-level `value_per_unit`
+    is the per-raster default (a per-raster value wins). Labels are slugified and
+    de-duplicated so they make safe column-name stems. Raises `ValueError` on an
+    empty or malformed input.
+    """
+    if rasters in (None, "", []):
+        raise ValueError("rasters is required (a path, or a list of paths/dicts).")
+    if isinstance(rasters, (str, dict)):
+        rasters = [rasters]
+    if not isinstance(rasters, (list, tuple)):
+        raise ValueError("rasters must be a path, a dict, or a list of those.")
+
+    specs: list[dict] = []
+    seen: set[str] = set()
+    for i, item in enumerate(rasters):
+        if isinstance(item, str):
+            item = {"path": item}
+        if not isinstance(item, dict) or not str(item.get("path") or "").strip():
+            raise ValueError(f"rasters[{i}] needs a non-empty 'path'.")
+        label = _slug(item.get("label") or Path(str(item["path"])).stem)
+        base, k = label, 2
+        while label in seen:
+            label = f"{base}_{k}"
+            k += 1
+        seen.add(label)
+        spec: dict = {"path": str(item["path"]), "label": label}
+        if item.get("units"):
+            spec["units"] = str(item["units"])
+        vpu = item.get("value_per_unit", value_per_unit)
+        if vpu is not None:
+            try:
+                spec["value_per_unit"] = float(vpu)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"rasters[{i}] value_per_unit {vpu!r} is not a number."
+                ) from None
+        specs.append(spec)
+    return specs
+
+
+def _aggregate_narrative(res: dict) -> str:
+    u = res.get("units", {})
+    lines = [
+        f"Aggregated {len(res.get('rasters', []))} raster(s) to "
+        f"{u.get('feature_count', 0)} unit(s) of `{Path(u.get('path', '?')).name}`"
+        + (" (truncated)" if u.get("truncated") else "")
+        + (f", keyed by {', '.join(u['id_columns'])}" if u.get("id_columns") else "")
+        + "."
+    ]
+    for t in res.get("rasters", []):
+        unit = f" {t['units']}" if t.get("units") else ""
+        aw = " (area-weighted)" if t.get("area_weighted") else ""
+        line = (f"- `{t['label']}`: total {_fmt(t.get('unit_sum_total'))}{unit}{aw} "
+                f"across all units")
+        if t.get("value_total") is not None:
+            line += (f"; valued {_fmt(t['value_total'])} "
+                     f"{t.get('value_currency', 'USD')} @ "
+                     f"{_fmt(t.get('value_per_unit'))}/{(t.get('units') or 'unit')}")
+        lines.append(line + ".")
+    feats = res.get("features", [])
+    if feats:
+        lines.append(f"\nPer-unit table -> `{res.get('csv_path', '?')}` "
+                     f"(and the vector "
+                     f"`{Path(res.get('output_vector', {}).get('path', '?')).name}`).")
+        for f in feats[:15]:
+            props = ", ".join(f"{k}={v}" for k, v in (f.get("properties") or {}).items())
+            vals = "; ".join(f"{k}={_fmt(v)}" for k, v in (f.get("values") or {}).items())
+            lines.append(f"- unit {f['feature_index']}"
+                         + (f" ({props})" if props else "") + f": {vals}")
+        if len(feats) > 15:
+            lines.append(f"- ... and {len(feats) - 15} more (see the CSV).")
+    for n in res.get("notes", []):
+        lines.append(f"- note: {n}")
+    return "\n".join(lines)
+
+
+def aggregate_to_units(rasters: Any, units_path: str, dst_path: str,
+                       id_columns: list[str] | None = None,
+                       stats: list[str] | None = None,
+                       value_per_unit: float | None = None,
+                       area_weighted: bool = False, all_touched: bool = False,
+                       value_currency: str = "USD",
+                       max_units: int = 5000) -> dict[str, Any]:
+    """Roll one or more ecosystem-service rasters up to reporting-unit polygons
+    (municipalities, parcels, intervention footprints) and, where InVEST carries
+    no money figure, multiply by a flat per-unit value so the table also has a
+    currency column. Writes the units vector back out with a column per (raster,
+    stat) plus `val_<label>`, a tidy CSV alongside, and a `<dst>_aggregate.json`
+    sidecar. Needs the `invest-geo` conda env.
+
+    `rasters`: a path, or a list of paths / `{path, label?, units?,
+      value_per_unit?}` dicts. A `diff_*.tif` written by `compare_scenarios` is
+      the usual input -- "what does this land-use change buy each unit?".
+    `units_path`: polygon vector of the reporting units (under an allowed
+      folder); reprojected to each raster's CRS automatically.
+    `dst_path`: output vector, `.gpkg` / `.shp` / `.geojson` (driver by
+      extension; `.shp` truncates long field names -- prefer `.gpkg`).
+    `id_columns`: unit-id columns to carry through (default: first 4 attributes).
+    `stats`: any of sum, mean, count, min, max, std, median (default
+      sum/mean/count).
+    `value_per_unit`: flat value per raster value-unit (e.g. USD per ton),
+      applied to every raster lacking its own; `val_<label> = value_per_unit *
+      sum`.
+    `area_weighted`: multiply each pixel by its area in hectares before summing
+      -- use for a per-hectare density raster; ignored for a geographic CRS.
+    `all_touched`: count every pixel the polygon boundary touches, not just
+      those whose centre falls inside.
+    """
+    roots = _SETTINGS.allowed_roots()
+    try:
+        specs = _aggregate_raster_specs(rasters, value_per_unit)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    if stats:
+        bad = [s for s in stats if s not in _AGG_STATS]
+        if bad:
+            return {"ok": False,
+                    "error": f"unknown stats {bad}; allowed: {list(_AGG_STATS)}"}
+        stats = list(dict.fromkeys(stats))
+    else:
+        stats = ["sum", "mean", "count"]
+
+    try:
+        for s in specs:
+            s["path"] = str(resolve_input_path(s["path"], roots))
+        units = str(resolve_input_path(units_path, roots))
+        dst = str(resolve_output_path(dst_path, roots))
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        res = geo_client.run_aggregate_to_units(
+            specs, units, dst, _SETTINGS,
+            id_columns=list(id_columns) if id_columns else None,
+            stats=stats, area_weighted=bool(area_weighted),
+            all_touched=bool(all_touched),
+            value_currency=str(value_currency or "USD"),
+            max_units=int(max_units),
+        )
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+
+    if not res.get("ok"):
+        return {"ok": False, "dst": dst, "units_path": units, **res}
+    res["narrative"] = _aggregate_narrative(res)
+    return {"ok": True, "dst": dst, "units_path": units, **res}
 
 
 # ---------------------------------------------------------------------------
@@ -1962,6 +2126,7 @@ _TOOLS = [
     list_invest_job_artifacts,
     summarize_results,
     compare_scenarios,
+    aggregate_to_units,
     build_report,
     scaffold_project,
     project_readiness,
