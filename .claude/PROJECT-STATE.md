@@ -1,4 +1,4 @@
-# invest-mcp — curated project-state snapshot (2026-08-31, rev 9)
+# invest-mcp — curated project-state snapshot (2026-08-31, rev 10)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
@@ -6,7 +6,30 @@ distilled state.
 
 ## ⟳ RESUME POINT (2026-08-31) — read this first
 
-**Latest work: `build_report` `[tool]` (#35) + `workspace/report.py`** — a
+**Latest work: `aggregate_to_units` `[tool]` (#36) + `geo/aggregate.py`** (runs
+in `invest-geo`) — roll one or more ecosystem-service rasters up to
+reporting-unit polygons (municipal boundaries, cadastral parcels, intervention
+footprints). Input is a path, or a list of paths / `{path, label?, units?,
+value_per_unit?}` dicts — a `diff_*.tif` from `compare_scenarios` is the usual
+case ("what does this land-use change buy each unit?"). Per unit×raster it
+computes `stats` (sum/mean/count/min/max/std/median, default sum/mean/count) over
+the pixels whose centre falls in the polygon (`all_touched` = any-touch), and
+`val_<label>` = `value_per_unit`·sum — the simple $ valuation InVEST does not
+carry, a global default with a per-raster override. `area_weighted` multiplies
+each pixel by its area in hectares first (for a per-ha density raster; ignored
+for a geographic CRS). Writes the units vector back out (`.gpkg`/`.shp`/
+`.geojson`, one column per (raster, stat) + `val_*`), a tidy CSV alongside, and a
+`<dst>_aggregate.json` sidecar. Pure helper `_aggregate_raster_specs`
+normalises the `rasters` arg (slug + dedup labels, value default). Verified
+end-to-end (.venv → subprocess → invest-geo) on the real carbon job's
+`c_storage_bas.tif` + `SubBasin.shp`: `count` 76,650 px and `mean` 50.62 match
+the already-verified `summarize_results` zonal exactly; `sum` 3,880,246.53 (<
+InVEST total 4,061,555.98 — the subbasin doesn't cover the whole raster);
+`val` = sum·50 = 194,012,326.60. `Basin.shp` + `all_touched` → 77,672 px.
++15 tests (`test_aggregate.py`). Full suite **203 passed, 6 skipped**.
+Not committed.
+
+Prior work: **`build_report` `[tool]` (#35) + `workspace/report.py`** — a
 methods + results memo (**Markdown**) for one or more jobs, assembled from what
 is already on disk: run metadata, the datastack `args`, `provenance.json`
 (InVEST / tool versions + input SHA-256), the artifact catalog, the
@@ -89,9 +112,21 @@ new resources (`invest://coefficients`, `invest://coefficients/{name}`); 11 new
 tests. **Not committed.**
 
 Prior long sessions: the **data-preparation layer** (roadmap 8–10) then the
-**Workbench hand-off** + hydrography + a soil refinement. Now **35 MCP tools +
-7 resources + 4 prompts, 194 tests green** (188 pass + 6 skip — numpy helpers
-absent from `.venv`, verified in `invest-geo`).
+**Workbench hand-off** + hydrography + a soil refinement, then `clone_job` +
+`build_report` + `aggregate_to_units`. Now **36 MCP tools + 7 resources +
+4 prompts, 209 tests green** (203 pass + 6 skip — numpy helpers absent from
+`.venv`, verified in `invest-geo`).
+
+`aggregate_to_units` `[tool]` + `geo/aggregate.py` (runs in invest-geo): zonal
+roll-up of 1+ service rasters (or a `diff_*.tif` from `compare_scenarios`) to
+reporting-unit polygons (municipalities / parcels / intervention footprints),
+with a flat per-unit valuation (`val_<label>` = `value_per_unit`·sum) where
+InVEST carries no money figure. Pure helper `_aggregate_raster_specs`. Writes
+the units vector back out (one column per (raster, stat) + `val_*`), a tidy CSV
+and a `<dst>_aggregate.json` sidecar. Verified end-to-end on the real carbon
+job's `c_storage_bas.tif` + `SubBasin.shp`: `count` 76,650 and `mean` 50.62
+match the already-verified `summarize_results` zonal exactly. +15 tests. Not
+committed.
 
 **The 11-branch stack is MERGED into `main`** (2026-08-30). `main` = `8a56650`
 (`origin/main`), 11 bottom-up merge commits (PRs #2, #12, #4, #5, #6, #7, #8, #1,
@@ -399,7 +434,7 @@ documents conditionals in the description.
   + output sandbox stubbed. End-to-end on the real carbon baseline + scenario
   jobs: numbers match `raster_values_summary.csv` (4,061,555.98) and
   `compare_scenarios` (Δ −130,285.96, −3.2%).
-- 194 tests green (188 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
+- 209 tests green (203 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
   texture triangle, EPIC K — with numpy absent from `.venv`; verified in
   `invest-geo`). Registered and "Connected" in Claude Code as `invest`.
 

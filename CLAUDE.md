@@ -110,10 +110,11 @@ src/invest_mcp/
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
     report.py        render(payload) → memo markdown de métodos + resultados (overview, params, provenance con sha256, outputs, results desde summary.json, figuras, sección de comparación) — stdlib puro, solo colaciona y formatea. Lo usa la tool build_report
   geo/
-    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds + run_fetch_dem/run_fetch_landcover/run_fetch_climate/run_fetch_soil/run_fetch_hydrography; subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds + run_aggregate_to_units + run_fetch_dem/run_fetch_landcover/run_fetch_climate/run_fetch_soil/run_fetch_hydrography; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
     summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
     compare.py       (CORRE EN invest-geo) alinea escenario->baseline, ráster diferencia + delta stats + zonal + escribe compare.json
+    aggregate.py     (CORRE EN invest-geo) aggregate_to_units: roll-up zonal de 1+ rásters de servicio (o `diff_*.tif` de compare_scenarios) a polígonos de unidades (municipios/predios/intervención); por unidad×ráster stats sum|mean|count|min|max|std|median + `val_<label>` = value_per_unit·sum (sum area-weighted por ha si area_weighted, se ignora en CRS geográfico); reescribe el vector de unidades con una columna por (ráster, stat) + CSV tidy + `<dst>_aggregate.json`. Reusa `summarize._jsonable` + `prep._describe_vector`
     prep.py          (CORRE EN invest-geo) rutinas deterministas: op=reproject|clip|align_stack|raster_classes (raster+vector); lee JSON de stdin, escribe salidas + describe cada capa
     hydro.py         (CORRE EN invest-geo) delineación de cuencas: pygeoprocessing fill_pits→flow_dir_d8→flow_accum→extract_streams_d8→snap outlets→delineate_watersheds_d8; escribe el vector de cuencas + intermedios en `<dst_stem>_hydro/`
     fetch.py         (CORRE EN invest-geo, TOCA RED) op=dem|landcover: descarga de buckets AWS públicos vía GDAL `/vsicurl/` (sin auth) — dem=Copernicus GLO-30 (`copernicus-dem-30m`, tiles 1°), landcover=ESA WorldCover 10m 2020/2021 (`esa-worldcover`, tiles 3°, +class_legend). `_download_layer` mosaica; `reproject_clip_describe` = cola común (reproyecta/recorta vía `prep`, describe) — la reusa `climate.py`
@@ -125,7 +126,7 @@ src/invest_mcp/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 35 tools MCP + register(server); helpers `_choose_table_arg` (tables_from_template / check_table_vs_raster), `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff), `_load_json`
+  tools.py           las 36 tools MCP + register(server); helpers `_choose_table_arg` (tables_from_template / check_table_vs_raster), `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff), `_aggregate_raster_specs` (aggregate_to_units: normaliza el arg `rasters` = path | dict | lista → specs con label slug+dedup + value_per_unit por ráster con default global), `_load_json`
   resources.py       7 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, guía de modelos = qué modelo responde a qué pregunta, base de coeficientes citados + sus ficheros) + register(server)
   prompts.py         4 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table, recommend_model) + register(server)
   knowledge/
@@ -154,12 +155,13 @@ tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_hydro, test_biotable, test_fetch,
                      test_climate, test_soil, test_hydrography,
                      test_datastack, test_knowledge_coefficients,
-                     test_check_table, test_clone_job, test_report
-                     (194 tests: 188 pass + 6 skip sin numpy)
+                     test_check_table, test_clone_job, test_report,
+                     test_aggregate
+                     (209 tests: 203 pass + 6 skip sin numpy)
 ```
 
-`geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
-`geo/hydro.py`, `geo/fetch.py`, `geo/climate.py`, `geo/soil.py`,
+`geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/aggregate.py`,
+`geo/prep.py`, `geo/hydro.py`, `geo/fetch.py`, `geo/climate.py`, `geo/soil.py`,
 `geo/hydrography.py`) **solo importan
 stdlib al cargar**; rasterio/pyproj/shapely/pyogrio/geopandas/pygeoprocessing/numpy se
 importan dentro de las funciones (para que el env `.venv` pueda importar el
@@ -173,7 +175,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (35 tools) + 7 resources + 4 prompts
+## 4. Tool surface (36 tools) + 7 resources + 4 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -192,6 +194,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
 | `summarize_results(job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Resumen de un run terminado: stats por ráster de salida (válidos/nodata, min/max/media/std/suma, histograma 10-bins), zonal por feature sobre un AOI vectorial (reproyectado al CRS del ráster), la `raster_values_summary.csv` de InVEST si existe, un digest en lenguaje natural y un PNG de preview del ráster principal (best-effort, subproceso aislado). Escribe `<jobdir>/summary/summary.json`. Necesita el env `invest-geo`. |
 | `compare_scenarios(baseline_job_id, scenario_job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Baseline vs escenario alternativo del **mismo modelo** (el propósito de InVEST — tradeoffs). Por cada ráster de salida presente en ambos runs: alinea el escenario a la malla del baseline (reproyecta si difieren), escribe `diff_<nombre>.tif` = `escenario - baseline`, y reporta total antes/después, Δ y % de cambio, px que suben/bajan/igual, histograma de Δ, zonal de Δ por feature sobre un AOI, digest NL y un PNG de preview con colormap divergente. Escribe `<scen_jobdir>/compare_vs_<baseline_job_id>/compare.json`. Necesita el env `invest-geo`. |
+| `aggregate_to_units(rasters, units_path, dst_path, id_columns=None, stats=None, value_per_unit=None, area_weighted=False, all_touched=False, value_currency="USD", max_units=5000)` | **Entregable de reparto.** Roll-up zonal de 1+ rásters de servicio (una salida de InVEST, o un `diff_*.tif` de `compare_scenarios` — repartir el **Δ** es el caso típico: "¿qué le deja este cambio de uso a cada municipio/predio?") a los polígonos de `units_path`. `rasters` = un path, o una lista de paths / dicts `{path, label?, units?, value_per_unit?}`. Por unidad×ráster calcula `stats` (`sum` `mean` `count` `min` `max` `std` `median`; def sum/mean/count) sobre los píxeles cuyo centro cae en el polígono (`all_touched` = cualquier toque), y `val_<label>` = `value_per_unit`·sum (valoración $ simple donde InVEST no la trae; `value_per_unit` global con override por ráster). `area_weighted` multiplica cada píxel por su área en ha antes de sumar (para un ráster de densidad por-ha; se ignora en CRS geográfico). Reescribe `units_path` como `dst_path` (`.gpkg`/`.shp`/`.geojson` — driver por extensión; `.shp` trunca nombres largos) con una columna por (ráster, stat) + `val_*`, un CSV tidy al lado y `<dst>_aggregate.json`. Devuelve totales por ráster (incl. `value_total`), filas por unidad y digest NL. Necesita el env `invest-geo`. |
 | `build_report(job_ids, dst_path, title="", include_args=True, include_provenance=True, include_artifacts=True, include_comparisons=True)` | Memo de métodos + resultados en **Markdown** para uno o varios jobs, ensamblado de lo que ya hay en disco — **colaciona y formatea, no calcula ni interpreta**. Por job: metadatos del run, `args` del datastack, `provenance.json` (versiones InVEST/tool + sha256 de cada input), catálogo de artefactos, el `summary.json` de `summarize_results` (stats por ráster + zonal AOI) + la `raster_values_summary.csv` de InVEST, y el PNG de preview. Si dos jobs dados tienen un `compare_scenarios` entre ellos, añade la sección de diferencia. Un job no-`succeeded` recibe la cola de su log. `job_ids` = uno o una lista (conserva el orden). `dst_path` termina en `.md`, bajo carpeta permitida. Rutas de imagen relativas a `dst_path` si comparten unidad. **No necesita `invest-geo`.** Convierte el `.md` con `pandoc report.md -o report.pdf`. |
 | `fetch_dem(dst_path, aoi_path="", bbox=None, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="bilinear", source="cop30", keep_intermediate=False)` | **TOCA RED.** Descarga un DEM para el AOI y lo deja como GeoTIFF. `source="cop30"` (único cableado): **Copernicus GLO-30** (~30 m) del bucket AWS público `copernicus-dem-30m` — sin credenciales, contacta solo `copernicus-dem-30m.s3.amazonaws.com`. Área por `aoi_path` (vector; sus bounds mandan y con `clip_to_aoi` enmascara al polígono) y/o `bbox` `[minx,miny,maxx,maxy]` en **lon/lat (EPSG:4326)**. `buffer_deg` pad; `target_crs`/`target_resolution` reproyectan (reusa `prep._op_reproject`/`_op_clip`). Tiles oceánicos/fuera de cobertura → `tiles_missing`. Necesita `invest-geo`. |
 | `fetch_landcover(dst_path, aoi_path="", bbox=None, year=2021, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="nearest", source="worldcover", keep_intermediate=False)` | **TOCA RED.** Igual que `fetch_dem` pero **ESA WorldCover 10 m** (`year` 2020/2021, 11 clases) del bucket AWS público `esa-worldcover` (sin auth, contacta `esa-worldcover.s3.eu-central-1.amazonaws.com`). `resampling="nearest"` por defecto (categórico). La respuesta trae `class_legend` (valor→etiqueta) listo para `tables_from_template`. Necesita `invest-geo`. |
@@ -271,10 +274,26 @@ Convenciones:
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
 8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
 `Dummy_InVEST` o un bbox de los Alpes.
-**35 tools + 7 resources + 4 prompts. 194 tests en verde** (`pytest -q`, 188
+**36 tools + 7 resources + 4 prompts. 209 tests en verde** (`pytest -q`, 203
 pass + 6 skip sin numpy).
 
-**Última sesión (2026-08-31, cont.):** `build_report` `[tool]` +
+**Última sesión (2026-08-31, cont.):** `aggregate_to_units` `[tool]` +
+`geo/aggregate.py` (CORRE EN invest-geo) — roll-up zonal de rásters de servicio
+(o `diff_*.tif` de `compare_scenarios`) a polígonos de unidades
+(municipios/predios/intervención), con valoración $ simple (`val_<label>` =
+`value_per_unit`·sum). Núcleo puro `_aggregate_raster_specs` (normaliza el arg
+`rasters` = path | dict | lista; label slug+dedup; `value_per_unit` global con
+override por ráster) + `_aggregate_narrative`. Escribe el vector de unidades con
+una columna por (ráster, stat) + `val_*`, CSV tidy y `<dst>_aggregate.json`.
+Verificado end-to-end (.venv → subproceso → invest-geo) sobre `c_storage_bas.tif`
+del job de carbon real + `SubBasin.shp`: `count` 76 650 px y `mean` 50.62
+**clavan** con el zonal ya verificado de `summarize_results`; `sum` 3 880 246.53
+(< total InVEST 4 061 555.98 porque la subcuenca no cubre todo el ráster);
+`val_carbon_baseline` = sum·50 = 194 012 326.60. `Basin.shp` + `all_touched=True`
+→ 77 672 px, 3 932 663.59. Drivers `.gpkg`/`.geojson`/`.shp` OK. +15 tests
+(`test_aggregate.py`). Sin commitear.
+
+**Sesión previa (2026-08-31, cont.):** `build_report` `[tool]` +
 `workspace/report.py` — memo markdown de métodos + resultados para 1+ jobs,
 ensamblado de lo que ya hay en disco (metadatos, `args`, `provenance.json` con
 sha256, catálogo de artefactos, `summary.json` de `summarize_results` + la
@@ -368,8 +387,9 @@ frágil: una lectura de ventana puede cortarse a media franja
 **Siguientes candidatos** (roadmap §6, "Capacidades pendientes por etapa"):
 `fetch_hydrography` `source="hydrorivers_global"`/HydroBASINS lakes · `fetch_soil`
 PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) y refinar HSG con Ksat+profundidad · `fetch_climate`
-`source="terraclimate"`/`"chirps"` · `aggregate_to_units` ·
-`compare_scenarios_multi` · `export_map` · ampliar el KB de coeficientes (más
+`source="terraclimate"`/`"chirps"` · `compare_scenarios_multi` · `export_map` ·
+`aggregate_to_units` refinamientos (repartir a subunidades anidadas, valoración
+por tabla en vez de escalar constante) · ampliar el KB de coeficientes (más
 regiones/biomas, glosario, unidades por output).
 
 ### Funciona / verificado
@@ -571,9 +591,22 @@ regiones/biomas, glosario, unidades por output).
   tabla de stats + CSV de InVEST, sección de comparación, log-tail en job
   fallido, `_num`/`_bytes`, escape de `|`) + tool (escribe el `.md`, `include_*`
   apagan secciones, guard rails).
-- 194 tests en verde (188 pass — + `test_report` 12, `test_clone_job` 10,
-  `test_check_table` 17, `test_knowledge_coefficients` 11, `test_hydrography` 16,
-  `test_datastack` 15, +2 en `test_soil`; 6 skips: helpers numpy —
+- **`aggregate_to_units`** (`geo/aggregate.py` + tool + `_aggregate_raster_specs`)
+  end-to-end (2026-08-31, .venv → subproceso → invest-geo) sobre
+  `c_storage_bas.tif` del job `carbon-20260830T103940-174b40` + `SubBasin.shp`
+  (EPSG:32733): 1 unidad, `count` 76 650 px y `mean` 50.62 **clavan** con el
+  zonal ya verificado de `summarize_results`; `sum` 3 880 246.53 (< total InVEST
+  4 061 555.98, la subcuenca no cubre todo el ráster); `val_carbon_baseline` =
+  sum·50 = 194 012 326.60. `Basin.shp` + `all_touched=True` → 77 672 px /
+  3 932 663.59; `area_weighted` con píxel de 1 ha no cambia la suma. Drivers
+  `.gpkg`/`.geojson`/`.shp` + CSV tidy + `<dst>_aggregate.json`. +15 tests
+  (`test_aggregate.py`): `_aggregate_raster_specs` (str/lista/dict, slug+dedup de
+  labels, `value_per_unit` global vs override, errores) + payload building
+  (`run_aggregate_to_units` stubeado) + guard rails del tool (rasters vacío,
+  stat desconocido, sandbox in/out, `env_missing`, happy path con narrative).
+- 209 tests en verde (203 pass — + `test_aggregate` 15, `test_report` 12,
+  `test_clone_job` 10, `test_check_table` 17, `test_knowledge_coefficients` 11,
+  `test_hydrography` 16, `test_datastack` 15, +2 en `test_soil`; 6 skips: helpers numpy —
   `_ra_mm_per_day`, triángulo textural, EPIC K — con numpy ausente del `.venv`;
   se verifican en `invest-geo`). Registrado y "Connected" en Claude Code.
 
@@ -736,8 +769,16 @@ receta que el LLM sigue y adapta.
 **Salida / entregables**
 - `[tool]` `compare_scenarios_multi` — N escenarios y/o N servicios en una tabla de
   trade-offs; ranking.
-- `[tool]` `aggregate_to_units` — sumar los Δ de servicio a municipios/predios/
-  polígonos de intervención; valoración $ simple donde InVEST no la trae.
+- ~~`[tool]` `aggregate_to_units`~~ **HECHO** (2026-08-31) — `geo/aggregate.py`
+  (CORRE EN invest-geo) + `run_aggregate_to_units` + tool + `_aggregate_raster_specs`
+  (puro). Roll-up zonal de 1+ rásters de servicio (o `diff_*.tif` de
+  `compare_scenarios`) a polígonos de unidades; `stats` sum/mean/count/min/max/
+  std/median por unidad×ráster; `val_<label>` = `value_per_unit`·sum (valoración
+  $ simple, global con override por ráster); `area_weighted` ×área ha; reescribe
+  el vector de unidades (columna por (ráster, stat) + `val_*`) + CSV tidy +
+  `<dst>_aggregate.json`. Verificado end-to-end (ver §5). Pendiente: repartir a
+  subunidades anidadas, valoración por tabla de precios en vez de constante,
+  poblar `datasets` del manifest.
 - ~~`[tool]` `build_report`~~ **HECHO** (2026-08-31) — `workspace/report.py`
   (`render(payload)`, stdlib puro) + tool. Memo **Markdown** para 1+ jobs:
   overview, y por job params + `provenance.json` (sha256) + catálogo de outputs

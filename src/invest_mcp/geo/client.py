@@ -480,3 +480,24 @@ def run_delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
         "fill_pits": fill_pits,
         "keep_intermediate": keep_intermediate,
     }, settings, timeout=_HYDRO_TIMEOUT_S, label="watershed delineation")
+
+
+def run_aggregate_to_units(rasters: list[dict], units_path: str, dst_path: str,
+                           settings: Settings, *,
+                           id_columns: list[str] | None = None,
+                           stats: list[str] | None = None,
+                           area_weighted: bool = False,
+                           all_touched: bool = False,
+                           value_currency: str = "USD",
+                           max_units: int = 5000) -> dict:
+    return _run_geo_worker("invest_mcp.geo.aggregate", {
+        "rasters": rasters,
+        "units_path": units_path,
+        "dst_path": dst_path,
+        "id_columns": id_columns,
+        "stats": stats or ["sum", "mean", "count"],
+        "area_weighted": bool(area_weighted),
+        "all_touched": bool(all_touched),
+        "value_currency": value_currency or "USD",
+        "max_units": int(max_units),
+    }, settings, timeout=_SUMMARY_TIMEOUT_S, label="aggregate to units")
