@@ -224,30 +224,22 @@ Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 punto
 **32 tools + 4 resources + 2 prompts. 141 tests en verde** (`pytest -q`, 6 skip
 sin numpy).
 
-**11 ramas apiladas sobre `main`, NINGUNA fusionada**, cada una con **PR abierto
-apuntando a la de abajo** (fusionar en este orden — GitHub reapunta la siguiente
-a `main` sola — o cerrar todas y hacer un squash de `fetch-soil-bedrock` contra
-`main`):
+**La pila de 11 ramas ESTÁ FUSIONADA en `main`** (2026-08-30). `main` =
+`8a56650` (`origin/main`), 11 merge-commits bottom-up (PRs #2, #12, #4, #5, #6,
+#7, #8, #1, #9, #10, #11 — #3 se auto-cerró al borrar su rama base y se recreó
+como #12). Todas las ramas de feature borradas (local y `origin`). Solo queda
+`main`. Los merges se hicieron por la API de GitHub con el token del credential
+manager (`git credential fill`); las bajas de rama con `git push origin
+--delete`. `gh` CLI **no** está instalado.
 
-```
-main
- └─ data-prep-routines        d951843  PR #2 → main       scaffold_project + reproject/clip/align_raster_stack + resolve_output_path
-     └─ readiness-resources-prompts  622a3cd  PR #3 → #2   project_readiness + 4 resources + 2 prompts (resources.py, prompts.py)
-         └─ delineate-watersheds     404ad9c  PR #4 → #3   geo/hydro.py (cadena D8 pygeoprocessing)
-             └─ tables-from-template 2d7780d  PR #5 → #4   workspace/biotable.py + op=raster_classes + spec_translate.table_arg_specs
-                 └─ fetch-dem        d6453d1  PR #6 → #5   geo/fetch.py op=dem (Copernicus GLO-30, sin auth)
-                     └─ fetch-landcover  de81391  PR #7 → #6   geo/fetch.py op=landcover (ESA WorldCover, sin auth)
-                         └─ fetch-climate  5ed59c6  PR #8 → #7   geo/climate.py (WorldClim precip + Hargreaves ETo)
-                             └─ fetch-soil  fa67940  PR #1 → #8   geo/soil.py (SoilGrids 2.0: texture + HSG + USLE K)
-                                 └─ fetch-hydrography  26423d2  PR #9 → #1   geo/hydrography.py (HydroSHEDS rivers/basins)
-                                     └─ datastack-io   e2d28c6  PR #10 → #9  workspace/datastack.py + import/export_datastack
-                                         └─ fetch-soil-bedrock  (HEAD)   PR #11 → #10  geo/soil.py variable=depth_to_bedrock (SoilGrids 2017 BDTICM)   ← HEAD
-```
-
-Todas pusheadas a `github.com/nogales02/invest-mcp`. `gh` CLI **no** está
-instalado en esta máquina → los PRs se abren por la API de GitHub con el
-token del credential manager de git (`git credential fill`). PRs #1–#8 abiertos
-en la sesión anterior; #9–#11 pendientes de abrir igual.
+Orden fusionado (cada rama era la anterior + más commits, pila lineal → cero
+conflictos): `data-prep-routines` (scaffold + reproject/clip/align) →
+`readiness-resources-prompts` (project_readiness + 4 resources + 2 prompts) →
+`delineate-watersheds` (geo/hydro.py D8) → `tables-from-template`
+(workspace/biotable.py) → `fetch-dem` (COP30) → `fetch-landcover` (WorldCover) →
+`fetch-climate` (WorldClim + Hargreaves) → `fetch-soil` (SoilGrids 2.0) →
+`fetch-hydrography` (HydroSHEDS) → `datastack-io` (import/export_datastack) →
+`fetch-soil-bedrock` (SoilGrids 2017 BDTICM).
 
 **Cadena de preparación ya montada** (todas las tools existen y están
 verificadas): `scaffold_project` →
