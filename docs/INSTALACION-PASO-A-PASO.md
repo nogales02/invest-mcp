@@ -101,7 +101,8 @@ descomprímelo donde quieras. Te saltas los `git clone` / `git pull` de esta gu�
   instalador). Para gente cómoda en terminal.
 
 Cualquier otro cliente MCP (Cline, Continue, Cursor, LibreChat, mcphost para
-Ollama…) también sirve — ver `INSTALL.md`.
+Ollama…) también sirve — ver `INSTALL.md`. Para pilotar `invest-mcp` con un
+modelo local (Qwen, Llama…) servido por **Ollama**, ver el apartado **5.c**.
 
 ---
 
@@ -324,6 +325,135 @@ claude mcp add invest --scope user --env "INVEST_MCP_INVEST_EXE=C:\Program Files
   para solo la carpeta actual.
 - Comprueba con `claude mcp list` → debe decir `invest: connected`.
 - Reinicia Claude Code (`/exit` y volver a entrar, o `claude --continue`).
+
+### 5.c Ollama (con un modelo local como Qwen)
+
+`invest-mcp` es **cliente-agnóstico**: cualquier cliente MCP lo pilota igual. Si
+quieres que lo maneje un modelo local servido por **Ollama** (Qwen, Llama,
+Mistral…) en vez de Claude, esto es lo que cambia.
+
+**Idea clave:** Ollama **no es** un cliente MCP — solo sirve el modelo. Para que
+un modelo local *use* `invest-mcp` necesitas un **host MCP** en medio que:
+(1) le pida las respuestas a Ollama, (2) lance `invest-mcp` (por *stdio*, igual
+que Claude) y le pase las llamadas a herramientas, (3) haga el bucle "pensar →
+llamar tool → leer el resultado → seguir". **El servidor `invest-mcp` y todas sus
+salvaguardas son exactamente los mismos**; solo cambia quién lo pilota.
+
+Aquí se usa **`mcphost`** (el host MCP para Ollama más habitual). Al final hay una
+alternativa en Python (`ollmcp`) y otros hosts.
+
+#### 5.c.1 Instala Ollama y baja un modelo con "tools"
+
+1. Instala Ollama: <https://ollama.com/download> (Windows). Queda escuchando solo
+   en `http://localhost:11434`.
+2. Baja un modelo **que sepa llamar herramientas** (*function calling*).
+   `invest-mcp` es un agente de ~10–15 pasos con 35 tools, así que **cuanto más
+   grande, mejor**:
+
+   ```powershell
+   ollama pull qwen2.5:7b-instruct      # mínimo razonable
+   ollama pull qwen2.5:14b-instruct     # recomendado si te da la RAM/VRAM
+   # ollama pull qwen2.5:32b-instruct   # si vas sobrado de hardware
+   ```
+
+   Qwen 2.5 / Qwen 3 *Instruct* soportan llamadas a herramientas nativas en
+   Ollama (comprueba con `ollama show qwen2.5:7b-instruct` → sección
+   *Capabilities* debe incluir `tools`). Modelos < 7B, o sin `tools`, fallarán al
+   encadenar llamadas.
+
+3. **Sube la ventana de contexto.** Las descripciones de las 35 tools + los
+   resources ocupan bastante; con el `num_ctx` por defecto (2048) el modelo se
+   atraganta y "olvida" tools. Crea un modelo derivado con contexto grande y
+   temperatura baja:
+
+   ```powershell
+   @"
+   FROM qwen2.5:14b-instruct
+   PARAMETER num_ctx 32768
+   PARAMETER temperature 0.1
+   "@ | Set-Content Modelfile
+
+   ollama create qwen-invest -f Modelfile
+   ```
+
+   Usa `qwen-invest` como nombre de modelo a partir de aquí.
+
+#### 5.c.2 Instala `mcphost`
+
+Es un binario en Go. Con Go instalado:
+
+```powershell
+go install github.com/mark3labs/mcphost@latest
+```
+
+…o descarga el ejecutable de <https://github.com/mark3labs/mcphost/releases> y
+ponlo en el PATH. Comprueba con `mcphost --help`.
+
+#### 5.c.3 Config de `mcphost` apuntando a `invest-mcp`
+
+Crea `mcphost.json` con **el mismo bloque que en 5.a**: el `command` es tu `$PY`
+(el `python.exe` del env del servidor — conda o `.venv`, ver arriba en el paso 5).
+
+```json
+{
+  "mcpServers": {
+    "invest": {
+      "command": "C:\\Users\\tu\\AppData\\Roaming\\mamba\\envs\\invest-mcp\\python.exe",
+      "args": ["-m", "invest_mcp"],
+      "env": {
+        "INVEST_MCP_INVEST_EXE": "C:\\Program Files\\InVEST 3.20.1 Workbench\\resources\\invest\\invest.exe"
+      }
+    }
+  }
+}
+```
+
+`invest-mcp mcp-config` imprime este mismo bloque con tus rutas ya resueltas y
+las **barras dobles** `\\` puestas (es JSON). Algunas versiones de `mcphost`
+esperan la clave `mcpServers` y otras `servers`; si se queja, renómbrala.
+
+#### 5.c.4 Lánzalo
+
+```powershell
+mcphost --config .\mcphost.json -m ollama:qwen-invest
+```
+
+- `-m ollama:<modelo>` = proveedor Ollama + el modelo del paso 5.c.1.
+- Ollama en otra máquina/puerto: añade `--provider-url http://IP:11434`.
+- En el prompt, prueba: *"lista los modelos de InVEST"* → deberías ver a Qwen
+  llamar a `list_invest_models` y devolver la tabla. Luego, algo más largo:
+  *"describe el modelo `sdr` y valida estos args: …"*.
+
+#### 5.c.5 Alternativa en Python: `ollmcp`
+
+Sin Go, un cliente MCP para Ollama interactivo de terminal:
+
+```powershell
+& $PY -m pip install mcp-client-for-ollama
+ollmcp --servers-json .\mcphost.json --model qwen-invest
+```
+
+(o `ollmcp --mcp-server "C:\...\python.exe -m invest_mcp" --model qwen-invest`).
+Te deja activar/desactivar tools sobre la marcha — útil para no saturar de
+contexto a un modelo pequeño.
+
+#### 5.c.6 Qué esperar (y qué no)
+
+- **Mismas salvaguardas que con Claude**: lista blanca de rutas de entrada,
+  `datastack.json` + `provenance.json` por run, jobs en
+  `%USERPROFILE%\invest-mcp-data\`. Cambiar a un modelo local no relaja nada.
+- Un modelo local de 7–14B **encadena peor** que Claude: puede saltarse un paso,
+  repetir una tool o inventarse el nombre de un argumento. Mitiga:
+  - pídele **una cosa concreta por turno** ("valida estos args", luego "ejecuta")
+    en vez de "prepara y corre todo el estudio";
+  - `temperature` baja + `num_ctx` alto (5.c.1);
+  - si el host no expone bien los *resources*, léelos tú
+    (`invest://model-guide`, `invest://data-sources`, `invest://coefficients`) y
+    pégale lo relevante en el prompt.
+- Es **más lento**: cada paso es una inferencia local.
+- Cualquier otro host MCP con Ollama sirve igual y con el **mismo** bloque
+  `mcpServers`: **LibreChat**, **Open WebUI** (vía el proxy `mcpo`, que convierte
+  MCP en OpenAPI), **Cline / Continue** en VS Code (con Ollama como *provider*).
 
 ---
 

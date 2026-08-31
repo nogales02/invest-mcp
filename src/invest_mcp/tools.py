@@ -5,7 +5,7 @@
     execution      run_invest_model, get_invest_job, get_invest_job_logs,
                    list_invest_jobs, cancel_invest_job, clone_job
     results        list_invest_job_artifacts, summarize_results,
-                   compare_scenarios
+                   compare_scenarios, build_report
     data prep      scaffold_project, project_readiness, fetch_dem,
                    fetch_landcover, fetch_climate, fetch_soil,
                    fetch_hydrography, reproject_layer, clip_to_aoi,
@@ -26,10 +26,13 @@ Everything returns plain JSON-able dicts so the client gets structured output.
 from __future__ import annotations
 
 import json
+import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from invest_mcp import __version__ as _MCP_VERSION
 from invest_mcp import invest_cli
 from invest_mcp.calibration import client as cal_client
 from invest_mcp.config import get_settings
@@ -44,6 +47,7 @@ from invest_mcp.workspace import biotable
 from invest_mcp.workspace import datastack as ds_io
 from invest_mcp.workspace import project as project_layout
 from invest_mcp.workspace import readiness as readiness_mod
+from invest_mcp.workspace import report as report_md
 from invest_mcp.workspace.sandbox import (
     SandboxError,
     allow_dir,
@@ -676,6 +680,167 @@ def compare_scenarios(baseline_job_id: str, scenario_job_id: str,
         "preview": cmp.get("preview"),
         "sidecar_json": cmp.get("sidecar_json"),
         "narrative": _compare_narrative(model_title, base.id, scen.id, cmp),
+    }
+
+
+def _load_json(path: str | Path) -> dict | None:
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def build_report(job_ids: list[str] | str, dst_path: str, title: str = "",
+                 include_args: bool = True, include_provenance: bool = True,
+                 include_artifacts: bool = True,
+                 include_comparisons: bool = True) -> dict[str, Any]:
+    """Assemble a methods + results memo (Markdown) for one or more InVEST jobs
+    from what is already on disk — it collates and formats, it does not compute
+    or interpret.
+
+    Per job it pulls together: the run metadata, the datastack `args`,
+    `provenance.json` (InVEST / tool versions + input SHA-256), the output
+    artifact catalog, the `summarize_results` `summary.json` sidecar (per-raster
+    stats, AOI zonal stats) and InVEST's `raster_values_summary.csv`, plus the
+    preview PNG. When two or more of the given jobs have a `compare_scenarios`
+    result between them, a difference section is added. A non-succeeded job gets
+    the tail of its run log.
+
+    `job_ids`: one id or a list (the report keeps that order).
+    `dst_path`: output path ending in `.md`, under an allowed folder.
+    `include_*`: drop the Parameters / Provenance / Outputs / comparison
+      sections. Image paths are written relative to `dst_path` when they share a
+      drive, absolute otherwise. No `invest-geo` env needed. Convert the `.md`
+      downstream (`pandoc report.md -o report.pdf`).
+    """
+    ids = [job_ids] if isinstance(job_ids, str) else list(job_ids or [])
+    ids = [str(x).strip() for x in ids if str(x).strip()]
+    if not ids:
+        return {"ok": False, "error": "pass one or more job_ids"}
+    if not dst_path.lower().endswith((".md", ".markdown")):
+        return {"ok": False, "error": "dst_path must end in .md"}
+
+    roots = _SETTINGS.allowed_roots()
+    try:
+        dst = resolve_output_path(dst_path, roots)
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    jobs = []
+    for jid in ids:
+        j = _STORE.get(jid)
+        if j is None:
+            return {"ok": False, "error": f"No such job: {jid}"}
+        jobs.append(j)
+
+    def _relref(target: str) -> str:
+        try:
+            rel = os.path.relpath(target, dst.parent)
+        except ValueError:  # different drive on Windows
+            rel = target
+        return rel.replace("\\", "/")
+
+    notes: list[str] = []
+    job_blobs: list[dict] = []
+    for j in jobs:
+        try:
+            spec = registry.get_spec(registry.resolve_model_id(j.model_id))
+        except Exception:  # noqa: BLE001 - calibration jobs have no InVEST spec
+            spec = {}
+        blob: dict[str, Any] = {
+            "job_id": j.id,
+            "model_id": j.model_id,
+            "model_title": spec.get("model_title") or j.model_id,
+            "status": j.status,
+            "returncode": j.returncode,
+            "created_at": j.created_at,
+            "started_at": j.started_at,
+            "ended_at": j.ended_at,
+            "workspace": j.workspace,
+        }
+        if include_args:
+            ds = _load_json(j.datastack_path) or {}
+            a = {k: v for k, v in (ds.get("args") or {}).items() if k != "workspace_dir"}
+            if a:
+                blob["args"] = a
+        if include_provenance:
+            prov = _load_json(j.provenance_path)
+            if prov:
+                blob["provenance"] = {
+                    k: prov.get(k) for k in (
+                        "invest_version", "invest_mcp_version", "python", "platform",
+                        "started_at", "ended_at", "returncode",
+                    )
+                } | {"inputs": prov.get("inputs") or []}
+        if include_artifacts:
+            blob["artifacts"] = artifacts.catalog(j.workspace)
+
+        summ = _load_json(Path(j.workspace).parent / "summary" / "summary.json")
+        if summ:
+            summ["invest_raster_values_summary"] = _read_invest_summary_csv(j.workspace)
+            blob["summary"] = summ
+            prev = summ.get("preview") or {}
+            if prev.get("path") and Path(prev["path"]).is_file():
+                blob["figures"] = [{
+                    "ref": _relref(prev["path"]),
+                    "caption": f"{j.model_id} — preview of the primary output raster",
+                }]
+
+        if j.status in TERMINAL and j.status != "succeeded":
+            blob["log_tail"] = _tail(j.log_path, 30)
+        job_blobs.append(blob)
+
+    comparisons: list[dict] = []
+    if include_comparisons and len(jobs) >= 2:
+        idset = {j.id for j in jobs}
+        seen: set[tuple[str, str]] = set()
+        for j in jobs:
+            for cdir in sorted(Path(j.datastack_path).parent.glob("compare_vs_*")):
+                base_id = cdir.name[len("compare_vs_"):]
+                cjson = _load_json(cdir / "compare.json")
+                if not cjson or base_id not in idset or (base_id, j.id) in seen:
+                    continue
+                seen.add((base_id, j.id))
+                entry = {"baseline_job_id": base_id, "scenario_job_id": j.id,
+                         "compare": cjson}
+                prev = cjson.get("preview") or {}
+                if prev.get("path") and Path(prev["path"]).is_file():
+                    entry["figure"] = {"ref": _relref(prev["path"]),
+                                       "caption": "difference (scenario − baseline)"}
+                comparisons.append(entry)
+        if not comparisons:
+            notes.append("No compare_scenarios result found between these jobs; run "
+                         "compare_scenarios(baseline, scenario) first to include a "
+                         "difference section.")
+
+    payload = {
+        "title": title or (
+            f"InVEST report — {job_blobs[0]['model_title']}"
+            if len(job_blobs) == 1 else "InVEST run report"
+        ),
+        "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "invest_mcp_version": _MCP_VERSION,
+        "jobs": job_blobs,
+        "comparisons": comparisons,
+    }
+    md = report_md.render(payload)
+    try:
+        dst.write_text(md, encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "error": f"could not write {dst}: {exc}"}
+
+    figures = [f["ref"] for b in job_blobs for f in b.get("figures", [])]
+    figures += [c["figure"]["ref"] for c in comparisons if c.get("figure")]
+    return {
+        "ok": True,
+        "path": str(dst),
+        "bytes": len(md.encode("utf-8")),
+        "jobs": [b["job_id"] for b in job_blobs],
+        "comparisons": [f"{c['baseline_job_id']} vs {c['scenario_job_id']}"
+                        for c in comparisons],
+        "figures": figures,
+        "notes": notes,
+        "hint": f"convert with: pandoc '{dst.name}' -o report.pdf  (or -o report.html)",
     }
 
 
@@ -1797,6 +1962,7 @@ _TOOLS = [
     list_invest_job_artifacts,
     summarize_results,
     compare_scenarios,
+    build_report,
     scaffold_project,
     project_readiness,
     fetch_dem,

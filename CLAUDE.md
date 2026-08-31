@@ -108,6 +108,7 @@ src/invest_mcp/
     biotable.py      tablas biofísicas (stdlib; puro): build_template (esqueleto: expande [MONTH]/[SOIL_GROUP], una fila por lucode, celdas en blanco) + parse_legend + check_table (valida una tabla RELLENA: cobertura vs clases del ráster, columnas required/inesperadas, celdas vacías/no-numéricas, invariantes duras + rangos típicos citados del KB; severity error|warning|ok)
     datastack.py     lee/escribe el parameter set `.invest.json` del Workbench ({args, model_id, invest_version}); tolera `model_name` legacy; relativize/absolutize de rutas (stdlib; puro) — punto de integración con el Workbench
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
+    report.py        render(payload) → memo markdown de métodos + resultados (overview, params, provenance con sha256, outputs, results desde summary.json, figuras, sección de comparación) — stdlib puro, solo colaciona y formatea. Lo usa la tool build_report
   geo/
     client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds + run_fetch_dem/run_fetch_landcover/run_fetch_climate/run_fetch_soil/run_fetch_hydrography; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
@@ -124,7 +125,7 @@ src/invest_mcp/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 34 tools MCP + register(server); helpers `_choose_table_arg` (tables_from_template / check_table_vs_raster) y `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff)
+  tools.py           las 35 tools MCP + register(server); helpers `_choose_table_arg` (tables_from_template / check_table_vs_raster), `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff), `_load_json`
   resources.py       7 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, guía de modelos = qué modelo responde a qué pregunta, base de coeficientes citados + sus ficheros) + register(server)
   prompts.py         4 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table, recommend_model) + register(server)
   knowledge/
@@ -145,7 +146,7 @@ src/invest_mcp/
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
 environment-server.yml  env conda "invest-mcp" (python+pip) para el servidor sin Python del sistema
 scripts/             bootstrap.ps1 (Windows) / bootstrap.sh (POSIX): elige server env (.venv o conda invest-mcp) + pip + setup + doctor + mcp-config
-docs/                INSTALACION-PASO-A-PASO.md  guía "para dummies" (ES): de cero a Claude conectado
+docs/                INSTALACION-PASO-A-PASO.md  guía "para dummies" (ES): de cero a Claude conectado (+ §5.c: pilotar el MCP con Ollama / Qwen vía mcphost)
 INSTALL.md           referencia terse: prereqs + snippets de config por cliente + seguridad
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_calibration_tools, test_summarize, test_compare,
@@ -153,8 +154,8 @@ tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_hydro, test_biotable, test_fetch,
                      test_climate, test_soil, test_hydrography,
                      test_datastack, test_knowledge_coefficients,
-                     test_check_table, test_clone_job
-                     (182 tests: 176 pass + 6 skip sin numpy)
+                     test_check_table, test_clone_job, test_report
+                     (194 tests: 188 pass + 6 skip sin numpy)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
@@ -172,7 +173,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (34 tools) + 7 resources + 4 prompts
+## 4. Tool surface (35 tools) + 7 resources + 4 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -191,6 +192,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `list_invest_job_artifacts(job_id)` | Catálogo de todos los ficheros de salida. |
 | `summarize_results(job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Resumen de un run terminado: stats por ráster de salida (válidos/nodata, min/max/media/std/suma, histograma 10-bins), zonal por feature sobre un AOI vectorial (reproyectado al CRS del ráster), la `raster_values_summary.csv` de InVEST si existe, un digest en lenguaje natural y un PNG de preview del ráster principal (best-effort, subproceso aislado). Escribe `<jobdir>/summary/summary.json`. Necesita el env `invest-geo`. |
 | `compare_scenarios(baseline_job_id, scenario_job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Baseline vs escenario alternativo del **mismo modelo** (el propósito de InVEST — tradeoffs). Por cada ráster de salida presente en ambos runs: alinea el escenario a la malla del baseline (reproyecta si difieren), escribe `diff_<nombre>.tif` = `escenario - baseline`, y reporta total antes/después, Δ y % de cambio, px que suben/bajan/igual, histograma de Δ, zonal de Δ por feature sobre un AOI, digest NL y un PNG de preview con colormap divergente. Escribe `<scen_jobdir>/compare_vs_<baseline_job_id>/compare.json`. Necesita el env `invest-geo`. |
+| `build_report(job_ids, dst_path, title="", include_args=True, include_provenance=True, include_artifacts=True, include_comparisons=True)` | Memo de métodos + resultados en **Markdown** para uno o varios jobs, ensamblado de lo que ya hay en disco — **colaciona y formatea, no calcula ni interpreta**. Por job: metadatos del run, `args` del datastack, `provenance.json` (versiones InVEST/tool + sha256 de cada input), catálogo de artefactos, el `summary.json` de `summarize_results` (stats por ráster + zonal AOI) + la `raster_values_summary.csv` de InVEST, y el PNG de preview. Si dos jobs dados tienen un `compare_scenarios` entre ellos, añade la sección de diferencia. Un job no-`succeeded` recibe la cola de su log. `job_ids` = uno o una lista (conserva el orden). `dst_path` termina en `.md`, bajo carpeta permitida. Rutas de imagen relativas a `dst_path` si comparten unidad. **No necesita `invest-geo`.** Convierte el `.md` con `pandoc report.md -o report.pdf`. |
 | `fetch_dem(dst_path, aoi_path="", bbox=None, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="bilinear", source="cop30", keep_intermediate=False)` | **TOCA RED.** Descarga un DEM para el AOI y lo deja como GeoTIFF. `source="cop30"` (único cableado): **Copernicus GLO-30** (~30 m) del bucket AWS público `copernicus-dem-30m` — sin credenciales, contacta solo `copernicus-dem-30m.s3.amazonaws.com`. Área por `aoi_path` (vector; sus bounds mandan y con `clip_to_aoi` enmascara al polígono) y/o `bbox` `[minx,miny,maxx,maxy]` en **lon/lat (EPSG:4326)**. `buffer_deg` pad; `target_crs`/`target_resolution` reproyectan (reusa `prep._op_reproject`/`_op_clip`). Tiles oceánicos/fuera de cobertura → `tiles_missing`. Necesita `invest-geo`. |
 | `fetch_landcover(dst_path, aoi_path="", bbox=None, year=2021, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="nearest", source="worldcover", keep_intermediate=False)` | **TOCA RED.** Igual que `fetch_dem` pero **ESA WorldCover 10 m** (`year` 2020/2021, 11 clases) del bucket AWS público `esa-worldcover` (sin auth, contacta `esa-worldcover.s3.eu-central-1.amazonaws.com`). `resampling="nearest"` por defecto (categórico). La respuesta trae `class_legend` (valor→etiqueta) listo para `tables_from_template`. Necesita `invest-geo`. |
 | `fetch_climate(dst_path, variable, aoi_path="", bbox=None, source="worldclim", period="monthly", months=None, resolution="10m", target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="bilinear", keep_intermediate=False)` | **TOCA RED.** Climatología de **WorldClim v2.1** (1970–2000, sin auth, contacta `geodata.ucdavis.edu`). `variable`: `precipitation` (`prec`, mm) o `eto` (ETo **Hargreaves-Samani** desde `tmin/tmax/tavg` + Ra por latitud/DOY — *modelada*, no medida). `period="monthly"` → 12 rásters (forma de SWY; `dst_path` **debe** llevar `{month}`, p.ej. `precip_{month}.tif`); `period="annual"` → 1 ráster = suma (forma de AWY). `months=[6,7,8]` subconjunto. `resolution` `10m`(def, ~18 km)/`5m`/`2.5m`/`30s`(~1 km). Necesita `invest-geo`. |
@@ -269,10 +271,24 @@ Convenciones:
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
 8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
 `Dummy_InVEST` o un bbox de los Alpes.
-**34 tools + 7 resources + 4 prompts. 182 tests en verde** (`pytest -q`, 176
+**35 tools + 7 resources + 4 prompts. 194 tests en verde** (`pytest -q`, 188
 pass + 6 skip sin numpy).
 
-**Última sesión (2026-08-31, cont.):** `clone_job` `[tool]` — re-lanza un job
+**Última sesión (2026-08-31, cont.):** `build_report` `[tool]` +
+`workspace/report.py` — memo markdown de métodos + resultados para 1+ jobs,
+ensamblado de lo que ya hay en disco (metadatos, `args`, `provenance.json` con
+sha256, catálogo de artefactos, `summary.json` de `summarize_results` + la
+`raster_values_summary.csv` de InVEST, figuras de preview, y la sección de
+diferencia si hay un `compare.json` entre dos de los jobs). Solo colaciona y
+formatea; stdlib puro; no necesita `invest-geo`. Verificado end-to-end sobre los
+jobs reales de carbon (baseline + escenario de deforestación): las cifras del
+memo cuadran con la `raster_values_summary.csv` (4 061 555.98) y con
+`compare_scenarios` (Δ −130 285.96, −3.2%, 1 717 px ↓). +12 tests. También:
+**`docs/INSTALACION-PASO-A-PASO.md` §5.c nuevo** — cómo pilotar el MCP con un
+modelo local vía **Ollama** (`mcphost` + Qwen: modelo con `tools`, `num_ctx`
+alto, config `mcpServers` idéntica; alternativa `ollmcp`; caveats).
+
+**Sesión previa (2026-08-31, cont.):** `clone_job` `[tool]` — re-lanza un job
 previo con args cambiados (lee el `datastack.json` del job, aplica
 `drop_args`+`overrides`, `submit` por el camino de `run_invest_model`). Devuelve
 `diff` + `cloned_from` + `source_status`; `hint` propone el `compare_scenarios`.
@@ -352,9 +368,9 @@ frágil: una lectura de ventana puede cortarse a media franja
 **Siguientes candidatos** (roadmap §6, "Capacidades pendientes por etapa"):
 `fetch_hydrography` `source="hydrorivers_global"`/HydroBASINS lakes · `fetch_soil`
 PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) y refinar HSG con Ksat+profundidad · `fetch_climate`
-`source="terraclimate"`/`"chirps"` · `build_report` · `aggregate_to_units` ·
-`compare_scenarios_multi` · ampliar el KB de coeficientes (más regiones/biomas,
-glosario, unidades por output).
+`source="terraclimate"`/`"chirps"` · `aggregate_to_units` ·
+`compare_scenarios_multi` · `export_map` · ampliar el KB de coeficientes (más
+regiones/biomas, glosario, unidades por output).
 
 ### Funciona / verificado
 - Autodetección de `invest.exe` + envs `invest-geo` / `invest-cal`; `invest_env`,
@@ -541,11 +557,25 @@ glosario, unidades por output).
   no-op no cuenta, `workspace_dir` siempre fuera) + guard rails del tool
   (job inexistente, datastack ausente, clon idéntico → error; submit stubeado
   recibe los args fusionados sin `workspace_dir`).
-- 182 tests en verde (176 pass — + `test_clone_job` 10, `test_check_table` 17,
-  `test_knowledge_coefficients` 11, `test_hydrography` 16, `test_datastack` 15,
-  +2 en `test_soil`; 6 skips: helpers numpy — `_ra_mm_per_day`, triángulo
-  textural, EPIC K — con numpy ausente del `.venv`; se verifican en
-  `invest-geo`). Registrado y "Connected" en Claude Code.
+- **`build_report`** (`workspace/report.py::render` + tool) end-to-end
+  (2026-08-31, .venv, sin `invest-geo`) sobre los jobs reales
+  `carbon-20260830T103940-174b40` (baseline, con `summary.json`) +
+  `carbon-20260830T115238-319176` (escenario de deforestación, con
+  `compare_vs_...`): memo markdown con Overview, por job Parameters /
+  Provenance (sha256 reales) / Outputs / Results (stats por ráster = 4 061 555.98,
+  **cuadra** con la `raster_values_summary.csv`) / Figures, y la sección de
+  comparación con la tabla Δ (−130 285.96, −3.2%, 1 717 px ↓) + zonal AOI.
+  Rutas de figura absolutas al caer report en `Y:` y los PNG en `C:` (fallback
+  cross-drive correcto). +12 tests (`test_report.py`): renderer puro (header/
+  overview/footer, secciones opcionales, tabla de params + digest truncado,
+  tabla de stats + CSV de InVEST, sección de comparación, log-tail en job
+  fallido, `_num`/`_bytes`, escape de `|`) + tool (escribe el `.md`, `include_*`
+  apagan secciones, guard rails).
+- 194 tests en verde (188 pass — + `test_report` 12, `test_clone_job` 10,
+  `test_check_table` 17, `test_knowledge_coefficients` 11, `test_hydrography` 16,
+  `test_datastack` 15, +2 en `test_soil`; 6 skips: helpers numpy —
+  `_ra_mm_per_day`, triángulo textural, EPIC K — con numpy ausente del `.venv`;
+  se verifican en `invest-geo`). Registrado y "Connected" en Claude Code.
 
 ### Pendiente
 - `conda-lock` para solves 100% reproducibles entre plataformas.
@@ -708,8 +738,14 @@ receta que el LLM sigue y adapta.
   trade-offs; ranking.
 - `[tool]` `aggregate_to_units` — sumar los Δ de servicio a municipios/predios/
   polígonos de intervención; valoración $ simple donde InVEST no la trae.
-- `[tool]` `build_report` — memo de métodos + resultados (markdown/HTML/PDF) con
-  mapas, tablas y procedencia.
+- ~~`[tool]` `build_report`~~ **HECHO** (2026-08-31) — `workspace/report.py`
+  (`render(payload)`, stdlib puro) + tool. Memo **Markdown** para 1+ jobs:
+  overview, y por job params + `provenance.json` (sha256) + catálogo de outputs
+  + resultados desde el `summary.json` de `summarize_results` + la
+  `raster_values_summary.csv` de InVEST + figuras de preview; sección de
+  diferencia si hay `compare.json` entre dos de los jobs; log-tail para un job
+  fallido. Solo colaciona. Convertir con `pandoc`. Verificado end-to-end (ver
+  §5). Pendiente: HTML/PDF nativo (ahora vía pandoc), incrustar los PNG.
 - `[tool]` `export_map` — GeoTIFF→PNG/GeoPDF con leyenda/basemap/AOI (mejor que el
   preview de debug); opcional proyecto QGIS.
 - `[tool]` `run_uncertainty` — Monte Carlo perturbando coeficientes de tabla →
