@@ -48,6 +48,46 @@ def test_cop30_urls_upper_bound_on_degree_line_excludes_next_tile():
 
 
 # ---------------------------------------------------------------------------
+# ESA WorldCover tile names / coverage (3-degree grid)
+# ---------------------------------------------------------------------------
+def test_floor3_snaps_to_three_degree_grid():
+    assert fetch._floor3(45.9) == 45
+    assert fetch._floor3(46.5) == 45          # tile spans 45..48
+    assert fetch._floor3(48.0) == 48
+    assert fetch._floor3(-12.5) == -15        # tile spans -15..-12
+    assert fetch._floor3(-15.0) == -15
+
+
+def test_worldcover_urls_2021_single_tile():
+    urls = fetch._worldcover_urls([6.1, 45.2, 6.9, 46.8], 2021)
+    assert [n for n, _ in urls] == ["ESA_WorldCover_10m_2021_v200_N45E006_Map"]
+    assert urls[0][1] == (
+        "/vsicurl/https://esa-worldcover.s3.eu-central-1.amazonaws.com/"
+        "v200/2021/map/ESA_WorldCover_10m_2021_v200_N45E006_Map.tif"
+    )
+
+
+def test_worldcover_urls_2020_uses_v100_and_year_dir():
+    (name, url), = fetch._worldcover_urls([6.1, 45.2, 6.9, 46.8], 2020)
+    assert name == "ESA_WorldCover_10m_2020_v100_N45E006_Map"
+    assert "/v100/2020/map/" in url
+
+
+def test_worldcover_urls_span_multiple_tiles_south_west():
+    names = {n for n, _ in fetch._worldcover_urls([-1.5, -13.5, 2.0, -11.0], 2021)}
+    assert names == {
+        "ESA_WorldCover_10m_2021_v200_S15W003_Map",
+        "ESA_WorldCover_10m_2021_v200_S15E000_Map",
+        "ESA_WorldCover_10m_2021_v200_S12W003_Map",
+        "ESA_WorldCover_10m_2021_v200_S12E000_Map",
+    }
+
+
+def test_worldcover_legend_has_eleven_classes():
+    assert set(fetch._WORLDCOVER_LEGEND) == {10, 20, 30, 40, 50, 60, 70, 80, 90, 95, 100}
+
+
+# ---------------------------------------------------------------------------
 # payload building
 # ---------------------------------------------------------------------------
 @pytest.fixture()
@@ -75,6 +115,17 @@ def test_run_fetch_dem_builds_payload(captured):
     json.dumps(p)
 
 
+def test_run_fetch_landcover_builds_payload(captured):
+    geo_client.run_fetch_landcover(
+        "lc.tif", settings=None, bbox_wgs84=[6.1, 45.2, 6.9, 45.9], year=2020)
+    p = captured["payload"]
+    assert p["op"] == "landcover" and p["source"] == "worldcover" and p["year"] == 2020
+    assert p["resampling"] == "nearest"          # categorical default
+    assert p["bbox_wgs84"] == [6.1, 45.2, 6.9, 45.9]
+    assert captured["label"] == "land-cover fetch"
+    json.dumps(p)
+
+
 # ---------------------------------------------------------------------------
 # tool guards
 # ---------------------------------------------------------------------------
@@ -92,3 +143,15 @@ def test_tool_rejects_bad_bbox_length(tmp_path, monkeypatch):
 def test_tool_rejects_dst_outside_allowed_roots(tmp_path):
     out = tools.fetch_dem("C:/Windows/Temp/dem.tif", bbox=[16.6, -12.7, 17.0, -12.2])
     assert out["ok"] is False and "outside every allowed folder" in out["error"]
+
+
+def test_fetch_landcover_requires_aoi_or_bbox():
+    out = tools.fetch_landcover("/x/lc.tif")
+    assert out["ok"] is False and "aoi_path or bbox" in out["error"]
+
+
+def test_fetch_landcover_rejects_bad_year(tmp_path, monkeypatch):
+    monkeypatch.setattr(tools._SETTINGS, "allowed_input_dirs", [tmp_path])
+    out = tools.fetch_landcover(str(tmp_path / "lc.tif"),
+                                bbox=[6.1, 45.2, 6.9, 45.9], year=2019)
+    assert out["ok"] is False and "2020 or 2021" in out["error"]

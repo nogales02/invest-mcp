@@ -7,8 +7,9 @@
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
     data prep      scaffold_project, project_readiness, fetch_dem,
-                   reproject_layer, clip_to_aoi, align_raster_stack,
-                   delineate_watersheds, tables_from_template
+                   fetch_landcover, reproject_layer, clip_to_aoi,
+                   align_raster_stack, delineate_watersheds,
+                   tables_from_template
     admin          invest_env, allow_input_dir
 
 Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
@@ -834,6 +835,53 @@ def fetch_dem(dst_path: str, aoi_path: str = "", bbox: list[float] | None = None
     return {"ok": bool(res.get("ok")), "dst": dst, "aoi": aoi, **res}
 
 
+def fetch_landcover(dst_path: str, aoi_path: str = "", bbox: list[float] | None = None,
+                    year: int = 2021, target_crs: str = "",
+                    target_resolution: list[float] | None = None,
+                    clip_to_aoi: bool = True, buffer_deg: float = 0.05,
+                    resampling: str = "nearest", source: str = "worldcover",
+                    keep_intermediate: bool = False) -> dict[str, Any]:
+    """Download a land-cover raster for an area of interest and land it as a
+    GeoTIFF.
+
+    Source (`source="worldcover"`, the only one wired up): **ESA WorldCover
+    10 m** (`year=2020` or `2021`), 11 classes, from the public AWS bucket
+    `esa-worldcover` -- no credentials. Contacts
+    `esa-worldcover.s3.eu-central-1.amazonaws.com` only.
+
+    Give the area as `aoi_path` (a vector; its bounds drive the download and,
+    with `clip_to_aoi`, the raster is masked to the polygon) and/or `bbox` as
+    `[minx, miny, maxx, maxy]` in **lon/lat degrees (EPSG:4326)**. `resampling`
+    defaults to `nearest` -- land cover is categorical, keep it that way when
+    reprojecting. The result carries a `class_legend` (value -> label) you can
+    feed straight into `tables_from_template`. Writes `dst_path` (must be under
+    an allowed folder). Needs the `invest-geo` env.
+    """
+    if not aoi_path and not bbox:
+        return {"ok": False, "error": "provide aoi_path or bbox [minx,miny,maxx,maxy] (lon/lat)"}
+    if bbox is not None and len(bbox) != 4:
+        return {"ok": False, "error": "bbox must be [minx, miny, maxx, maxy] in lon/lat degrees"}
+    if int(year) not in (2020, 2021):
+        return {"ok": False, "error": "year must be 2020 or 2021 (ESA WorldCover)"}
+    roots = _SETTINGS.allowed_roots()
+    try:
+        dst = str(resolve_output_path(dst_path, roots))
+        aoi = str(resolve_input_path(aoi_path, roots)) if aoi_path else None
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        res = geo_client.run_fetch_landcover(
+            dst, _SETTINGS, source=source or "worldcover", year=int(year),
+            bbox_wgs84=[float(v) for v in bbox] if bbox else None,
+            aoi_path=aoi, clip_to_aoi=bool(clip_to_aoi), buffer_deg=float(buffer_deg),
+            target_crs=(str(target_crs) or None), target_resolution=target_resolution,
+            resampling=resampling or "nearest",
+            keep_intermediate=bool(keep_intermediate))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    return {"ok": bool(res.get("ok")), "dst": dst, "aoi": aoi, **res}
+
+
 def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
                          table_arg: str = "", legend_path: str = "",
                          include_optional: bool = True,
@@ -1156,6 +1204,7 @@ _TOOLS = [
     scaffold_project,
     project_readiness,
     fetch_dem,
+    fetch_landcover,
     reproject_layer,
     clip_to_aoi,
     align_raster_stack,
