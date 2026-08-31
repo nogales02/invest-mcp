@@ -6,9 +6,13 @@
                    list_invest_jobs, cancel_invest_job
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
-    data prep      scaffold_project, reproject_layer, clip_to_aoi,
-                   align_raster_stack
+    data prep      scaffold_project, project_readiness, reproject_layer,
+                   clip_to_aoi, align_raster_stack
     admin          invest_env, allow_input_dir
+
+Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
+invest://conventions, invest://data-sources) and prompts (prepare_and_run_model,
+compare_land_use_scenarios) registered from invest_mcp.resources / .prompts.
 
 Everything returns plain JSON-able dicts so the client gets structured output.
 """
@@ -30,6 +34,7 @@ from invest_mcp.models import registry
 from invest_mcp.models import spec_translate
 from invest_mcp.workspace import artifacts
 from invest_mcp.workspace import project as project_layout
+from invest_mcp.workspace import readiness as readiness_mod
 from invest_mcp.workspace.sandbox import (
     SandboxError,
     allow_dir,
@@ -738,6 +743,65 @@ def align_raster_stack(rasters: list[dict], reference_path: str = "",
     return {"ok": bool(res.get("ok")), "reference": ref, **res}
 
 
+def project_readiness(root: str, models: list[str] | None = None) -> dict[str, Any]:
+    """Report which InVEST models a scaffolded project could attempt now and
+    which required inputs are still missing.
+
+    Scans `data/` and `tables/` under `root`, guesses each file's role from its
+    name (`dem`, `lulc`, `watersheds`, `biophysical_table`, ...), and matches
+    those against every model's *required* file inputs. This **supports** the
+    choice of what to run -- it does not choose, and every guess is surfaced
+    (`matched` / `ambiguous` / `missing`) for you to confirm. Numeric / option
+    inputs are reported under `needs_values`, not treated as blockers.
+
+    `models`: limit to these model ids/aliases; default is a shortlist of common
+      models that are installed. Needs no `invest-geo` env.
+    """
+    root_p = Path(root).expanduser()
+    if not root_p.is_absolute():
+        return {"ok": False, "error": "root must be an absolute path"}
+    root_p = root_p.resolve()
+
+    manifest = project_layout.load(root_p)
+    if manifest is None:
+        return {"ok": False,
+                "error": f"no project.json under {root_p}; run scaffold_project first"}
+
+    if models:
+        try:
+            wanted = [registry.resolve_model_id(m) for m in models]
+        except registry.UnknownModelError as exc:
+            return {"ok": False, "error": str(exc)}
+    else:
+        installed = {m.model_id for m in registry.list_models()}
+        wanted = [m for m in readiness_mod.DEFAULT_MODELS if m in installed]
+
+    inventory = readiness_mod.scan_project(root_p)
+    assessments: list[dict] = []
+    for mid in wanted:
+        try:
+            spec = registry.get_spec(mid)
+        except Exception as exc:  # noqa: BLE001
+            assessments.append({"model_id": mid, "error": str(exc)})
+            continue
+        assessments.append(readiness_mod.assess_model(mid, spec, inventory))
+
+    return {
+        "ok": True,
+        "root": str(root_p),
+        "target_crs": manifest.get("target_crs"),
+        "inventory": inventory,
+        "assessments": assessments,
+        "ready_to_attempt": [a["model_id"] for a in assessments if a.get("can_attempt")],
+        "gaps_by_model": {
+            a["model_id"]: [m["arg"] for m in a.get("missing", [])]
+                           + [x["arg"] for x in a.get("ambiguous", [])]
+            for a in assessments if not a.get("can_attempt") and not a.get("error")
+        },
+        "narrative": readiness_mod.narrative(inventory, assessments),
+    }
+
+
 # ---------------------------------------------------------------------------
 # calibration  (AWY / SWY / SDR / NDR — engine shared with the Workbench plugin)
 # ---------------------------------------------------------------------------
@@ -879,6 +943,7 @@ _TOOLS = [
     summarize_results,
     compare_scenarios,
     scaffold_project,
+    project_readiness,
     reproject_layer,
     clip_to_aoi,
     align_raster_stack,

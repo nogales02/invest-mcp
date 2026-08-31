@@ -104,6 +104,7 @@ src/invest_mcp/
   workspace/
     sandbox.py       allow-list de rutas de entrada (resolve_input_path) + de salida (resolve_output_path) + allow_dir de sesión
     project.py       convención de "proyecto InVEST": scaffold del árbol + project.json (stdlib, corre en el server)
+    readiness.py     escanea data/ + tables/, adivina rol por nombre, casa contra los inputs required de cada modelo (stdlib + spec_translate; puro)
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
     client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_prep/run_reproject/run_clip/run_align_stack; subproceso al env invest-geo
@@ -116,7 +117,9 @@ src/invest_mcp/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 22 tools MCP + register(server)
+  tools.py           las 23 tools MCP + register(server)
+  resources.py       4 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos) + register(server)
+  prompts.py         2 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios) + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
 environment-server.yml  env conda "invest-mcp" (python+pip) para el servidor sin Python del sistema
 scripts/             bootstrap.ps1 (Windows) / bootstrap.sh (POSIX): elige server env (.venv o conda invest-mcp) + pip + setup + doctor + mcp-config
@@ -124,7 +127,7 @@ docs/                INSTALACION-PASO-A-PASO.md  guía "para dummies" (ES): de c
 INSTALL.md           referencia terse: prereqs + snippets de config por cliente + seguridad
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_calibration_tools, test_summarize, test_compare,
-                     test_prep  (40 tests)
+                     test_prep, test_readiness, test_resources_prompts  (52 tests)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`)
@@ -140,7 +143,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (22 tools)
+## 4. Tool surface (23 tools) + 4 resources + 2 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -159,6 +162,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `summarize_results(job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Resumen de un run terminado: stats por ráster de salida (válidos/nodata, min/max/media/std/suma, histograma 10-bins), zonal por feature sobre un AOI vectorial (reproyectado al CRS del ráster), la `raster_values_summary.csv` de InVEST si existe, un digest en lenguaje natural y un PNG de preview del ráster principal (best-effort, subproceso aislado). Escribe `<jobdir>/summary/summary.json`. Necesita el env `invest-geo`. |
 | `compare_scenarios(baseline_job_id, scenario_job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Baseline vs escenario alternativo del **mismo modelo** (el propósito de InVEST — tradeoffs). Por cada ráster de salida presente en ambos runs: alinea el escenario a la malla del baseline (reproyecta si difieren), escribe `diff_<nombre>.tif` = `escenario - baseline`, y reporta total antes/después, Δ y % de cambio, px que suben/bajan/igual, histograma de Δ, zonal de Δ por feature sobre un AOI, digest NL y un PNG de preview con colormap divergente. Escribe `<scen_jobdir>/compare_vs_<baseline_job_id>/compare.json`. Necesita el env `invest-geo`. |
 | `scaffold_project(root, name="", target_crs="", aoi_path="", overwrite=False)` | Crea el árbol de "proyecto InVEST" (`data/raw`, `data/processed`, `tables`, `datastacks`, `jobs`, `logs`) + `project.json` (nombre, CRS objetivo, AOI, `datasets: []`). Añade `root` a la allow-list de la sesión (lecturas y **escrituras**). Idempotente; `overwrite` solo reescribe el `project.json`. No necesita `invest-geo`. |
+| `project_readiness(root, models=None)` | Escanea `data/` + `tables/` del proyecto, adivina el rol de cada fichero por su nombre (`dem`, `lulc`, `watersheds`, `biophysical_table`…) y lo casa contra los inputs **required** de cada modelo. Devuelve `inventory`, `assessments` (por modelo: `matched` / `ambiguous` / `missing` / `needs_values`), `ready_to_attempt`, `gaps_by_model` y un digest NL. **Apoya** la decisión de qué correr, no la toma. Los inputs numéricos/opción van en `needs_values`, no bloquean. No necesita `invest-geo`. |
 | `reproject_layer(src_path, dst_path, target_crs, resampling="nearest", resolution=None)` | Reproyecta un ráster o vector a `target_crs` (EPSG/WKT/proj). `resampling` (solo ráster): `nearest` para categóricos (land cover), `bilinear`/`cubic`/`average` para continuos. `resolution` `[x,y]` opcional = tamaño de píxel objetivo. Necesita `invest-geo`. |
 | `clip_to_aoi(src_path, dst_path, aoi_path, all_touched=False)` | Recorta un ráster (crop al bbox del AOI + máscara) o vector (`gpd.clip`) al polígono de `aoi_path`. El AOI se reproyecta al CRS de la capa. Necesita `invest-geo`. |
 | `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")` | Pone varios rásters en **una malla idéntica** (mismo CRS + tamaño de píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`. Malla **o** desde `reference_path` (un ráster) **o** desde `target_crs`+`resolution`+`extent` juntos. `resampling` se aplica a todos (correr dos veces si mezcla categóricos y continuos). Necesita `invest-geo`. |
@@ -166,6 +170,19 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
 | `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, `diagnostics` (sensibilidad Spearman por parámetro), `dotty_data` (rutas a JSON ploteables). |
 | `cancel_calibration_job(job_id)` | Mata un job de calibración. |
+
+**Resources MCP** (`resources.py`) — referencia que el cliente lee sin gastar una
+tool; solo datos, nunca decisiones:
+- `invest://models` — catálogo de modelos instalados (JSON).
+- `invest://model/{model_id}/cheatsheet` — briefing por modelo (`human_briefing`).
+- `invest://conventions` — el layout de proyecto + campos de `project.json`.
+- `invest://data-sources` — catálogo curado de fuentes (DEM, land cover, clima,
+  suelo, hidrografía) con URLs y notas.
+
+**Prompts/playbooks MCP** (`prompts.py`) — recetas que el LLM sigue y adapta:
+- `prepare_and_run_model(model_id, project_root)` — de scaffold a summarize.
+- `compare_land_use_scenarios(model_id, project_root)` — baseline vs escenario
+  con `compare_scenarios`.
 
 Convenciones:
 - `args` es el dict de args de InVEST tal cual; **rutas absolutas**.
@@ -248,12 +265,21 @@ Convenciones:
     idéntica** (362×520, mismos bounds y píxel, cada uno con su nodata/dtype) ✓.
   - Sandbox de escritura rechaza `dst` fuera de toda carpeta permitida; validación
     de `align_raster_stack` sin `reference`/`target_crs+resolution+extent`.
-- 40 tests en verde (nuevo `test_prep`: scaffold del proyecto, `resolve_output_path`,
-  construcción de payloads con `_run_prep` stubeado — todo puro). Registrado y
-  "Connected" en Claude Code.
+- **`project_readiness` + primeros Resources y Prompts MCP** (2026-08-30):
+  - `project_readiness` (`workspace/readiness.py`, puro): escanea `data/`+`tables/`,
+    adivina rol por keywords en el nombre, casa contra los inputs required de cada
+    modelo. Verificado contra `Dummy_InVEST` (SDR/SWY → `ready_to_attempt`; Carbon
+    → falta `carbon_pools_path`; AWY → falta `precipitation_path`). El matching es
+    name-based y best-effort **a propósito**: expone cada acierto/duda/hueco.
+  - 4 resources (`invest://models`, `invest://model/{id}/cheatsheet`,
+    `invest://conventions`, `invest://data-sources`) + 2 prompts
+    (`prepare_and_run_model`, `compare_land_use_scenarios`) registrados en
+    `build_server()` vía `resources.register` / `prompts.register`. `list_resources`
+    / `list_resource_templates` / `list_prompts` del servidor los devuelven.
+- 52 tests en verde (nuevos `test_prep`, `test_readiness`, `test_resources_prompts`
+  — todo puro). Registrado y "Connected" en Claude Code.
 
 ### Pendiente
-- Resources y prompts MCP (por ahora solo tools).
 - `conda-lock` para solves 100% reproducibles entre plataformas.
 - Merge del PR del plugin a `main` → cambiar `INVEST_MCP_CAL_PLUGIN_SPEC` /
   `environment-cal.yml` de `@refactor/shared-core` a `@main`.
@@ -294,16 +320,82 @@ Convenciones:
      (esqueleto de tabla biofísica por modelo). Afinar: chunking en `prep.py` para
      rásters gigantes (lee la banda entera); overwrite de shapefiles; poblar
      `datasets: []` del `project.json` desde estas rutinas.
-9. **Playbooks** (prompts MCP): "preparar+correr NDR", "preparar+correr Carbon",
-   "comparar dos escenarios de uso de suelo".
-10. **Base de conocimiento** (resources): catálogo de fuentes de datos por variable,
-    convención de carpetas, unidades, cheat-sheets por modelo.
+9. **Playbooks** (prompts MCP) — **PARCIAL** (2026-08-30): `prepare_and_run_model`
+   + `compare_land_use_scenarios` en `prompts.py`. Pendiente: playbook de
+   calibración, playbook multi-servicio.
+10. **Base de conocimiento** (resources) — **PARCIAL** (2026-08-30): `resources.py`
+    con catálogo de modelos, cheat-sheet por modelo, convención de carpetas y
+    catálogo de fuentes de datos. Pendiente: base de **coeficientes citados** por
+    clase de cobertura/región (para rellenar tablas biofísicas), unidades por
+    output, glosario.
 11. **Cache content-addressed** por hash de inputs; **snapshots de JSON Schema** +
     diff en CI para detectar cambios breaking al subir versión de InVEST.
 12. **conda-lock** (win-64 / linux-64 / osx-arm64) + imagen Docker (Linux, sin
     dependencia del Workbench, `invest` de conda-forge).
 
-### Convención de "proyecto InVEST" (a definir antes de las rutinas de datos)
+### Capacidades pendientes por etapa del flujo
+
+Cada una es una capacidad **acotada y determinista** (o dato/receta), no "hacer el
+servidor más listo" — el juicio y la orquestación viven en el cliente (ver §2 de
+la discusión: MCP = superficie del dominio; agente = LLM que la usa). Tag:
+`[tool]` función determinista · `[resource]` dato que el LLM lee · `[prompt]`
+receta que el LLM sigue y adapta.
+
+**Entrada de datos**
+- `[tool]` `fetch_dem` / `fetch_landcover` / `fetch_climate` / `fetch_soil` /
+  `fetch_hydrography` — descarga desde fuentes de `invest://data-sources`
+  (Copernicus GLO-30/SRTM, ESA WorldCover/ESRI LC, CHIRPS/WorldClim, SoilGrids,
+  HydroSHEDS). Auth para Earthdata/Copernicus. Van en `invest-geo`.
+- `[tool]` `delineate_watersheds` — routing sobre el DEM + pour points → vectores
+  de cuenca/subcuenca (los piden SDR/NDR/SWY). Determinista, patrón `prep.py`.
+- `[tool]` `build_aoi` — AOI desde punto+buffer / límite administrativo (GADM/GAUL)
+  / bbox / snap a cuenca.
+- `[tool]` `sanitize_layer` — arreglar nodata/dtype de rásters, geometrías
+  inválidas, multipart→singlepart, encoding y nombres de columna de CSVs.
+
+**Tablas biofísicas / lookup**
+- `[tool]` `tables_from_template` — dado el LULC, sacar clases únicas y emitir el
+  esqueleto de tabla con una fila por `lucode` y las columnas del modelo.
+- `[resource]` base de coeficientes citados por clase de cobertura y región.
+- `[tool]` `check_table_vs_raster` — toda clase del ráster tiene fila, sin
+  huérfanas, rangos con sentido.
+
+**Elegir modelo / integración Workbench**
+- `[prompt]` `recommend_model` — de la pregunta del usuario a modelo(s) + datos que
+  necesita cada uno (razonamiento del LLM, apoyado por `invest://models`).
+- `[tool]` `import_datastack` / `export_datastack` — round-trip `.invest.json` con
+  el Workbench (**el punto de integración declarado, aún sin tool**).
+- `[tool]` `clone_job` — copiar los args de un run terminado y re-ejecutar con
+  cambios (alimenta `compare_scenarios`).
+- `[tool]` `explain_provenance` — linaje completo de un resultado desde
+  `provenance.json` + los pasos de `prep` que produjeron cada input.
+
+**Salida / entregables**
+- `[tool]` `compare_scenarios_multi` — N escenarios y/o N servicios en una tabla de
+  trade-offs; ranking.
+- `[tool]` `aggregate_to_units` — sumar los Δ de servicio a municipios/predios/
+  polígonos de intervención; valoración $ simple donde InVEST no la trae.
+- `[tool]` `build_report` — memo de métodos + resultados (markdown/HTML/PDF) con
+  mapas, tablas y procedencia.
+- `[tool]` `export_map` — GeoTIFF→PNG/GeoPDF con leyenda/basemap/AOI (mejor que el
+  preview de debug); opcional proyecto QGIS.
+- `[tool]` `run_uncertainty` — Monte Carlo perturbando coeficientes de tabla →
+  bandas de confianza sobre las cifras titulares.
+
+**Calibración (extensión)**
+- `[tool]` split de validación / validación cruzada espacial, multi-aforo,
+  multi-objetivo (Pareto), incertidumbre (GLUE/DREAM), artefacto de informe,
+  warm-start desde una calibración previa, regionalización a cuencas no aforadas.
+
+**Infraestructura transversal**
+- `[tool]` `estimate_run_cost` — tiempo/RAM/disco desde extent+resolución antes de
+  lanzar; aviso de runs gigantes.
+- `[tool]` `manage_workspaces` — historial consultable, uso de disco, limpieza de
+  runs viejos.
+- Cache content-addressed (item 11), snapshots de schema + diff en CI (item 11),
+  conda-lock + Docker (item 12).
+
+### Convención de "proyecto InVEST" (IMPLEMENTADA en `workspace/project.py` + `scaffold_project`)
 ```
 {project}/
   project.json            AOI, CRS objetivo, metadatos, índice de datasets
