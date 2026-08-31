@@ -1,4 +1,4 @@
-# invest-mcp — curated project-state snapshot (2026-08-31, rev 5)
+# invest-mcp — curated project-state snapshot (2026-08-31, rev 6)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
@@ -6,7 +6,28 @@ distilled state.
 
 ## ⟳ RESUME POINT (2026-08-31) — read this first
 
-Latest session: the **cited-coefficient knowledge base** (`[resource]`, roadmap
+**Latest work: `check_table_vs_raster` `[tool]` + `fill_biophysical_table`
+`[prompt]`** — close the biophysical-table loop on top of the coefficient KB.
+`check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="")` checks
+a *filled* CSV: `coverage` (raster classes with no row, rows for absent codes,
+duplicate keys — needs `lulc_path` → `invest-geo`), `columns` (missing required,
+unexpected extras; cell checks only touch columns the model consumes), `cells`
+(empty required, non-numeric), `ranges` (hard `invariant_violations`: fractions
+∈ [0,1], curve numbers ordered A≤B≤C≤D ∈ (0,100], loads/depths ≥ 0, root_depth
+integer · soft `out_of_typical`: outside the KB's cited band, with the source
+`resource`). `severity` error|warning|ok, `pass = severity != error`. Pure core
+`biotable.check_table` + `coefficients.column_ranges()` / `parameter_for_column`;
+tool 33; `_choose_table_arg` extracted and shared with `tables_from_template`.
+`fill_biophysical_table` playbook: skeleton → match each class to an
+`invest://coefficients` record by cover semantics → record provenance in
+`logs/` → `check_table_vs_raster` until `ok`. +17 tests
+(`test_check_table.py`), full suite **164 passed, 6 skipped**. Verified
+end-to-end vs `Dummy_InVEST`: clean carbon table → warning (3 orphan rows);
+combined SDR calibration table → 46 columns flagged not-in-spec + `usle_c=0`
+below the cited floor; a deliberately broken table → all four planted defects.
+**Not committed.**
+
+Prior session: the **cited-coefficient knowledge base** (`[resource]`, roadmap
 item 10) — `src/invest_mcp/knowledge/coefficients/`, 7 parameter files
 (`usle_c`, `usle_p`, `ndr_nutrient`, `curve_number`, `kc`, `root_depth`,
 `carbon_pools`) + `sources.json` (verified bibliography) + `README.md` + a
@@ -21,9 +42,9 @@ only; every value carries `source_key` + `confidence` + `verified`
 new resources (`invest://coefficients`, `invest://coefficients/{name}`); 11 new
 tests. **Not committed.**
 
-Prior two long sessions: the **data-preparation layer** (roadmap 8–10) then the
-**Workbench hand-off** + hydrography + a soil refinement. Now **32 MCP tools +
-6 resources + 2 prompts, 152 tests green** (146 pass + 6 skip — numpy helpers
+Prior long sessions: the **data-preparation layer** (roadmap 8–10) then the
+**Workbench hand-off** + hydrography + a soil refinement. Now **33 MCP tools +
+6 resources + 3 prompts, 170 tests green** (164 pass + 6 skip — numpy helpers
 absent from `.venv`, verified in `invest-geo`).
 
 **The 11-branch stack is MERGED into `main`** (2026-08-30). `main` = `8a56650`
@@ -113,7 +134,7 @@ SDK: `mcp` 2.x — `FastMCP` was renamed to `MCPServer`
   writes a numpy JSON first and renders the image in a separate process that can
   crash without taking the run down. Images render fine on Workbench/CI/Linux.
 
-## Tool surface — 32 MCP tools (+ 6 resources, 2 prompts)
+## Tool surface — 33 MCP tools (+ 6 resources, 3 prompts)
 
 Env/discovery: `invest_env`, `allow_input_dir`.
 Model introspection: `list_invest_models`, `describe_invest_model`,
@@ -128,7 +149,10 @@ Data prep (`invest-geo` subprocess unless noted): `scaffold_project` (stdlib),
 SoilGrids 2017: depth_to_bedrock), `fetch_hydrography` (HydroSHEDS v1
 rivers / basins), `reproject_layer`, `clip_to_aoi`, `align_raster_stack`,
 `delineate_watersheds` (pygeoprocessing D8), `tables_from_template`
-(biophysical-table skeleton from LULC + MODEL_SPEC).
+(biophysical-table skeleton from LULC + MODEL_SPEC), `check_table_vs_raster`
+(validate a *filled* table: coverage vs raster classes, columns, cells, hard
+invariants + KB-cited typical ranges; pure core, `invest-geo` only for the
+raster classes).
 Datastack (stdlib, Workbench round-trip): `import_datastack`, `export_datastack`.
 Calibration: `validate_calibration_config`, `run_calibration`,
 `get_calibration_job`, `cancel_calibration_job`.
@@ -137,7 +161,9 @@ Resources: `invest://models`, `invest://model/{id}/cheatsheet`,
 `invest://conventions`, `invest://data-sources`, `invest://coefficients`
 (cited-coefficient KB index), `invest://coefficients/{name}` (one parameter file
 / `sources` / `readme` / a worked profile).
-Prompts: `prepare_and_run_model`, `compare_land_use_scenarios`.
+Prompts: `prepare_and_run_model`, `compare_land_use_scenarios`,
+`fill_biophysical_table` (skeleton → match classes to `invest://coefficients`
+records by cover semantics → record provenance → `check_table_vs_raster`).
 
 Reference data (not a tool): `src/invest_mcp/knowledge/coefficients/` — served
 by the two `invest://coefficients` resources via the stdlib loader
@@ -273,7 +299,20 @@ documents conditionals in the description.
   wires both URIs; `coefficients_entry("bogus")` returns error JSON with the
   `known` list (does not raise). `pyproject.toml` ships the files as
   package-data.
-- 152 tests green (146 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
+- **`check_table_vs_raster` + `fill_biophysical_table`** (2026-08-31) — pure
+  `biotable.check_table` + `coefficients.column_ranges()` /
+  `parameter_for_column` (maps `usle_c` / `cn_a` / `kc_6` / `c_above` … to its
+  KB parameter + cited `typical_range`). Tool 33; `_choose_table_arg` shared
+  with `tables_from_template`. +17 tests (`test_check_table.py`): the KB range
+  map covers every parameter and carries a `resource`; clean table → `ok`;
+  missing raster-class row / empty required cell / non-numeric coefficient /
+  missing column / CN out of order / fraction > 1 / negative load → `error`;
+  orphan + duplicate rows / value outside the cited band → `warning` (+ source
+  `resource`); no-raster still checks structure & values; the tool is
+  registered; `_choose_table_arg` picks / errors correctly. End-to-end vs
+  `Dummy_InVEST` (clean carbon; combined SDR calibration table with 46
+  out-of-spec columns; a broken table).
+- 170 tests green (164 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
   texture triangle, EPIC K — with numpy absent from `.venv`; verified in
   `invest-geo`). Registered and "Connected" in Claude Code as `invest`.
 
@@ -324,7 +363,10 @@ prompts. **Rev 3→4:** `fetch_hydrography` (#30, HydroSHEDS rivers/basins);
 round-trip); `fetch_soil` `variable=depth_to_bedrock` (SoilGrids 2017 BDTICM).
 **Rev 4→5:** cited-coefficient knowledge base (`knowledge/coefficients/`, 7
 parameters + bibliography + Moorabool profile, two `invest://coefficients`
-resources) — roadmap item 2 below now largely done.
+resources). **Rev 5→6:** `check_table_vs_raster` `[tool]` (#33) +
+`fill_biophysical_table` `[prompt]` — the biophysical-table loop is closed:
+`tables_from_template` → fill from `invest://coefficients` → `check_table_vs_raster`
+→ `validate_invest_args`.
 
 **Still open** (CLAUDE.md §6 has the full tagged list):
 1. More `fetch_*`: `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) +
@@ -333,8 +375,8 @@ resources) — roadmap item 2 below now largely done.
    (tropics); `fetch_dem` `source=srtm|nasadem` (Earthdata token);
    `fetch_hydrography` HydroBASINS lakes / nested subwatersheds.
 2. Extend the cited-coefficient KB: NDR `eff`/`crit_len` outside semi-arid
-   tropics, USLE C/P for more regions/biomes, per-output units, a glossary;
-   `check_table_vs_raster` `[tool]` cross-checking a filled table against it.
+   tropics, USLE C/P for more regions/biomes, per-output units, a glossary.
+   (`check_table_vs_raster` against it is done — rev 5→6.)
 3. `clone_job` (copy a finished run's args, re-run with edits — feeds
    `compare_scenarios`); datastack "archive" (`.invest.tar.gz`).
 4. Output side: `compare_scenarios_multi`, `aggregate_to_units`, `build_report`

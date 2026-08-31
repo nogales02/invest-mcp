@@ -103,6 +103,202 @@ def build_template(
     }
 
 
+def _num(cell: object) -> float | None:
+    """A CSV cell as a float, or ``None`` if blank / not a number."""
+    s = str(cell).strip()
+    if s == "":
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def read_table(text: str) -> tuple[list[str], list[dict]]:
+    """CSV text -> ``(headers, [row-dict])``.
+
+    Header cells are stripped; short rows are padded, long rows keep only the
+    first ``len(headers)`` cells. Fully blank lines are dropped. Read the file
+    with ``utf-8-sig`` so a BOM does not end up in the first header.
+    """
+    rows = [r for r in csv.reader(io.StringIO(text)) if any(str(c).strip() for c in r)]
+    if not rows:
+        return [], []
+    headers = [h.strip() for h in rows[0]]
+    out: list[dict] = []
+    for r in rows[1:]:
+        cells = list(r) + [""] * (len(headers) - len(r))
+        out.append({h: cells[i] for i, h in enumerate(headers)})
+    return headers, out
+
+
+# Hard invariants -- true no matter which citation a value came from.
+_FRACTION_COLS = {"usle_c", "usle_p", "eff_n", "eff_p", "proportion_subsurface_n"}
+_NONNEG_COLS = {
+    "load_n", "load_p", "crit_len_n", "crit_len_p", "root_depth",
+    "c_above", "c_below", "c_soil", "c_dead",
+}
+_CN_QUAD = ("cn_a", "cn_b", "cn_c", "cn_d")
+_KNOWN_EXTRA = {"description", "lucode_name", "lulc_name", "name"}
+
+
+def _numeric_col(hl: str, ranges: dict) -> bool:
+    return hl in ranges or hl in _FRACTION_COLS or hl in _NONNEG_COLS or hl in _CN_QUAD
+
+
+def check_table(
+    key_col: str,
+    columns: list[dict],
+    table_text: str,
+    *,
+    raster_codes: list[int] | None = None,
+    column_ranges: dict | None = None,
+    include_optional: bool = True,
+) -> dict:
+    """Check a filled biophysical / lookup CSV against a model's column spec, the
+    land-cover raster (optional) and the cited-coefficient typical ranges.
+
+    ``columns`` are the non-key column specs from
+    :func:`invest_mcp.models.spec_translate.table_arg_specs` (``[TOKEN]``
+    placeholders still un-expanded). ``column_ranges`` is
+    :func:`invest_mcp.knowledge.coefficients.column_ranges` output. Returns
+    ``{"severity", "pass", "checks", ...}`` -- ``severity`` is ``error`` (a
+    blocker: missing rows/columns, empty required cell, non-numeric coefficient,
+    invariant broken), ``warning`` (orphan/duplicate rows, unexpected columns,
+    a value outside the cited literature band) or ``ok``.
+    """
+    ranges = column_ranges or {}
+    headers, rows = read_table(table_text)
+    lc = {h.lower(): h for h in headers}
+    key_hdr = lc.get(key_col.lower(), key_col)
+
+    # -- expected columns from the spec --
+    expected: list[tuple[str, str]] = []
+    for c in columns:
+        cid = c["id"]
+        if cid == key_col:
+            continue
+        req = c["required"]
+        if req is False and not include_optional:
+            continue
+        requirement = (
+            "required" if req is True
+            else "optional" if req is False
+            else f"required if: {req}"
+        )
+        for h in expand_column(cid)[0]:
+            expected.append((h, requirement))
+    exp_names = {h.lower() for h, _ in expected}
+    required_names = {h.lower() for h, r in expected if r == "required"}
+    conditional = sorted({h for h, r in expected if r.startswith("required if")})
+
+    missing_cols = sorted(h for h, r in expected if r == "required" and h.lower() not in lc)
+    skip = {key_col.lower()} | _KNOWN_EXTRA
+    unexpected_cols = sorted(
+        h for h in headers if h.lower() not in exp_names and h.lower() not in skip
+    )
+
+    # -- coverage against the raster --
+    coverage: dict = {}
+    if raster_codes is not None:
+        seen: set[int] = set()
+        dups: set[int] = set()
+        for row in rows:
+            v = _num(row.get(key_hdr, ""))
+            if v is None:
+                continue
+            iv = int(v)
+            if iv in seen:
+                dups.add(iv)
+            seen.add(iv)
+        rc = {int(x) for x in raster_codes}
+        coverage = {
+            "missing_rows": sorted(rc - seen),
+            "orphan_rows": sorted(seen - rc),
+            "duplicate_rows": sorted(dups),
+        }
+
+    # -- cells + ranges + invariants --
+    empty_required: list[dict] = []
+    non_numeric: list[dict] = []
+    out_of_typical: list[dict] = []
+    invariant: list[dict] = []
+
+    # cell / range / invariant checks only touch columns this model actually
+    # consumes -- an unexpected extra column is reported once, above, and then
+    # left alone (InVEST ignores it; its values do not affect this run).
+    checkable = exp_names
+
+    for row in rows:
+        rid = (str(row.get(key_hdr, "")).strip() or "?")
+        vals = {h.lower(): _num(row.get(h, "")) for h in headers if h.lower() in checkable}
+        for h in headers:
+            hl = h.lower()
+            if hl in skip or hl not in checkable:
+                continue
+            raw = str(row.get(h, "")).strip()
+            if hl in required_names and raw == "":
+                empty_required.append({"row": rid, "column": h})
+                continue
+            if raw == "":
+                continue
+            v = vals.get(hl)
+            if v is None:
+                if _numeric_col(hl, ranges):
+                    non_numeric.append({"row": rid, "column": h, "value": raw})
+                continue
+            if hl in _FRACTION_COLS and not 0.0 <= v <= 1.0:
+                invariant.append({"row": rid, "column": h, "value": v,
+                                  "rule": f"{h} must be a fraction in [0, 1]"})
+            if hl in _NONNEG_COLS and v < 0:
+                invariant.append({"row": rid, "column": h, "value": v,
+                                  "rule": f"{h} must be >= 0"})
+            if hl in _CN_QUAD and not 0 < v <= 100:
+                invariant.append({"row": rid, "column": h, "value": v,
+                                  "rule": f"{h} must be in (0, 100]"})
+            if hl == "root_depth" and v != int(v):
+                invariant.append({"row": rid, "column": h, "value": v,
+                                  "rule": "root_depth should be an integer (mm)"})
+            band = ranges.get(hl, {}).get("typical")
+            if band and not band[0] <= v <= band[1]:
+                out_of_typical.append({"row": rid, "column": h, "value": v,
+                                       "typical": band, "resource": ranges[hl]["resource"]})
+        quad = [vals.get(k) for k in _CN_QUAD]
+        if all(isinstance(x, float) for x in quad) and quad != sorted(quad):
+            invariant.append({
+                "row": rid, "columns": [k.upper() for k in _CN_QUAD],
+                "values": {k.upper(): vals.get(k) for k in _CN_QUAD},
+                "rule": "curve numbers must be ordered CN_A <= CN_B <= CN_C <= CN_D",
+            })
+
+    has_error = bool(
+        missing_cols or empty_required or non_numeric or invariant
+        or coverage.get("missing_rows")
+    )
+    has_warning = bool(
+        unexpected_cols or out_of_typical
+        or coverage.get("orphan_rows") or coverage.get("duplicate_rows")
+    )
+    severity = "error" if has_error else "warning" if has_warning else "ok"
+
+    return {
+        "severity": severity,
+        "pass": not has_error,
+        "headers": headers,
+        "row_count": len(rows),
+        "conditional_columns": conditional,
+        "checks": {
+            "coverage": coverage,
+            "columns": {"missing": missing_cols, "unexpected": unexpected_cols},
+            "cells": {"empty_required": empty_required, "non_numeric": non_numeric},
+            "ranges": {
+                "out_of_typical": out_of_typical,
+                "invariant_violations": invariant,
+            },
+        },
+    }
+
+
 def parse_legend(text: str) -> dict[int, str]:
     """First two columns of a CSV -> ``{int code: label}``. A non-numeric first
     cell (a header row) is skipped."""

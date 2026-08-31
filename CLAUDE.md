@@ -105,7 +105,7 @@ src/invest_mcp/
     sandbox.py       allow-list de rutas de entrada (resolve_input_path) + de salida (resolve_output_path) + allow_dir de sesión
     project.py       convención de "proyecto InVEST": scaffold del árbol + project.json (stdlib, corre en el server)
     readiness.py     escanea data/ + tables/, adivina rol por nombre, casa contra los inputs required de cada modelo (stdlib + spec_translate; puro)
-    biotable.py      esqueleto de tabla biofísica: expande columnas [MONTH]/[SOIL_GROUP], ensambla el CSV (una fila por lucode, celdas en blanco), parsea leyenda (stdlib; puro)
+    biotable.py      tablas biofísicas (stdlib; puro): build_template (esqueleto: expande [MONTH]/[SOIL_GROUP], una fila por lucode, celdas en blanco) + parse_legend + check_table (valida una tabla RELLENA: cobertura vs clases del ráster, columnas required/inesperadas, celdas vacías/no-numéricas, invariantes duras + rangos típicos citados del KB; severity error|warning|ok)
     datastack.py     lee/escribe el parameter set `.invest.json` del Workbench ({args, model_id, invest_version}); tolera `model_name` legacy; relativize/absolutize de rutas (stdlib; puro) — punto de integración con el Workbench
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
@@ -124,12 +124,12 @@ src/invest_mcp/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 32 tools MCP + register(server)
+  tools.py           las 33 tools MCP + register(server); `_choose_table_arg` (helper compartido por tables_from_template / check_table_vs_raster)
   resources.py       6 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, base de coeficientes citados + sus ficheros) + register(server)
-  prompts.py         2 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios) + register(server)
+  prompts.py         3 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table) + register(server)
   knowledge/
     __init__.py      paquete de DATOS de referencia (nunca lógica): base de coeficientes citados
-    coefficients.py  loader stdlib puro: entry(name)/index()/PARAMETERS/PROFILES; lee los JSON de coefficients/ y los sirve como texto
+    coefficients.py  loader stdlib puro: entry(name)/index()/PARAMETERS/PROFILES; lee los JSON de coefficients/ y los sirve como texto. + parameter_for_column(col)/column_ranges() → mapea columna InVEST (usle_c, cn_a, kc_6, c_above…) a su parámetro del KB + su typical_range citado (lo usa check_table_vs_raster)
     coefficients/    base de coeficientes citados para las tablas biofísicas/lookup de InVEST (v1, mayormente del FS28-Moorabool_MasterFile; root_depth + carbon_pools de refs estándar):
       README.md        cómo elegir un valor (5 pasos), por qué NO se casa con una leyenda, forma de cada registro
       sources.json     bibliografía: por fuente citation/doi/url/type/scope/provides/context/verified (web|excel|standard)
@@ -152,8 +152,8 @@ tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_prep, test_readiness, test_resources_prompts,
                      test_hydro, test_biotable, test_fetch,
                      test_climate, test_soil, test_hydrography,
-                     test_datastack, test_knowledge_coefficients
-                     (152 tests: 146 pass + 6 skip sin numpy)
+                     test_datastack, test_knowledge_coefficients, test_check_table
+                     (170 tests: 164 pass + 6 skip sin numpy)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
@@ -171,7 +171,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (32 tools) + 6 resources + 2 prompts
+## 4. Tool surface (33 tools) + 6 resources + 3 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -201,6 +201,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")` | Pone varios rásters en **una malla idéntica** (mismo CRS + tamaño de píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`. Malla **o** desde `reference_path` (un ráster) **o** desde `target_crs`+`resolution`+`extent` juntos. `resampling` se aplica a todos (correr dos veces si mezcla categóricos y continuos). Necesita `invest-geo`. |
 | `delineate_watersheds(dem_path, outlets_path, dst_path, threshold_flow_accumulation=1000, snap_distance_px=10, fill_pits=True, keep_intermediate=False)` | Corta polígonos de cuenca aguas arriba de puntos de salida con la cadena D8 de **pygeoprocessing** (mismo motor que InVEST → las cuencas cuadran con el routing de SDR/NDR/SWY): fill_pits → flow_dir_d8 → flow_accum → streams (umbral en px) → snap de cada outlet a la red → `delineate_watersheds_d8`. Reproyecta los outlets al CRS del DEM. Escribe `.gpkg`/`.shp`/`.geojson`; intermedios en `<dst_stem>_hydro/` (se borran salvo `keep_intermediate`). `snap_distance_px=0` desactiva el snap. Devuelve descripción del vector + `snap_report` por punto. Necesita `invest-geo`. |
 | `tables_from_template(model_id, lulc_path, dst_path, table_arg="", legend_path="", include_optional=True, max_classes=1000)` | Esqueleto de tabla biofísica/lookup de un modelo: una fila por lucode único del LULC + las columnas que pide su MODEL_SPEC (celdas de coeficiente en blanco). `table_arg` = qué CSV templetar (auto-detecta el que va por `lucode`; si hay varios, el error los lista). `legend_path` (CSV `code,label`) → añade columna `description`. Expande `[MONTH]`→`_1..12` y `[SOIL_GROUP]`→`_a..d`; otros `[TOKEN]` quedan literales con nota. Devuelve `headers`, `column_help` (about/units/requirement por columna), `classes` (valor+px), `narrative`. Necesita `invest-geo` (lee las clases del ráster). |
+| `check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="", include_optional=True, max_classes=1000)` | Valida una tabla biofísica/lookup **rellena** antes de correr. `checks`: `coverage` (con `lulc_path`: clases del ráster sin fila = `missing_rows`; filas para códigos ausentes = `orphan_rows`; claves duplicadas), `columns` (`missing` required, `unexpected` extras — solo se validan celdas de columnas que el modelo consume), `cells` (`empty_required`, `non_numeric`), `ranges` (`invariant_violations` duras: fracciones ∈ [0,1], curve numbers ordenados A≤B≤C≤D ∈ (0,100], loads/depths ≥ 0, root_depth entero · `out_of_typical` blandas: fuera de la banda citada del KB, con el `resource` fuente). `severity` = `error` (bloqueante) \| `warning` (revisar) \| `ok`; `pass` = `severity != error`. `lulc_path` opcional (sin él: solo estructura + valores, no necesita `invest-geo`). Cierra `tables_from_template` → rellenar desde `invest://coefficients` → `check_table_vs_raster` → `validate_invest_args`. |
 | `import_datastack(src_path)` | Lee un **datastack** `.invest.json` (parameter set, p.ej. uno que guardó el Workbench) y reporta qué trae: modelo, `args`, `required_missing`, por cada ruta si existe en disco y si cae dentro del sandbox, `ready`. Resuelve rutas relativas contra la carpeta del datastack. Enchufa directo con `validate_invest_args` → `run_invest_model`. stdlib puro, no necesita `invest-geo`. |
 | `export_datastack(dst_path, model_id="", args=None, job_id="", relative=False)` | Escribe un **datastack** `.invest.json` (`{args, model_id, invest_version}`) que el Workbench abre directamente — el punto de hand-off con el Workbench. Da `model_id`+`args`, o `job_id` para sacar modelo+args de un run terminado. `relative=True` reescribe las rutas de fichero relativas a `dst_path` (stack portable). Chequea las rutas contra el sandbox y reporta su existencia sin bloquear. stdlib puro. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
@@ -230,6 +231,11 @@ tool; solo datos, nunca decisiones:
 - `prepare_and_run_model(model_id, project_root)` — de scaffold a summarize.
 - `compare_land_use_scenarios(model_id, project_root)` — baseline vs escenario
   con `compare_scenarios`.
+- `fill_biophysical_table(model_id, project_root)` — del esqueleto de
+  `tables_from_template` a una tabla con valores citados: casar cada clase de
+  cobertura con un registro de `invest://coefficients` por semántica (no por
+  código), anotar la procedencia en `logs/`, y `check_table_vs_raster` hasta
+  `ok` o cada warning justificado.
 
 Convenciones:
 - `args` es el dict de args de InVEST tal cual; **rutas absolutas**.
@@ -247,10 +253,20 @@ Convenciones:
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
 8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
 `Dummy_InVEST` o un bbox de los Alpes.
-**32 tools + 6 resources + 2 prompts. 152 tests en verde** (`pytest -q`, 146
+**33 tools + 6 resources + 3 prompts. 170 tests en verde** (`pytest -q`, 164
 pass + 6 skip sin numpy).
 
-**Última sesión (2026-08-31):** base de **coeficientes citados** (`[resource]`,
+**Última sesión (2026-08-31, cont.):** `check_table_vs_raster` `[tool]` +
+`fill_biophysical_table` `[prompt]` — cierran el lazo de la tabla biofísica.
+`check_table_vs_raster` valida una tabla rellena (cobertura vs clases del
+ráster, columnas, celdas, invariantes duras + rangos típicos citados del KB);
+núcleo puro `biotable.check_table` + `coefficients.column_ranges()`; verificado
+end-to-end contra `Dummy_InVEST` (carbon limpio → warning por 3 orphan rows;
+SDR real → detecta 46 columnas ajenas al spec + `usle_c=0` bajo el suelo
+citado; tabla rota → los 4 defectos plantados). `fill_biophysical_table` guía
+esqueleto → `invest://coefficients` → check. +17 tests (`test_check_table.py`).
+
+**Sesión previa (2026-08-31):** base de **coeficientes citados** (`[resource]`,
 roadmap §6 punto 10) — paquete `src/invest_mcp/knowledge/coefficients/` con 7
 parámetros (`usle_c`, `usle_p`, `ndr_nutrient`, `curve_number`, `kc`,
 `root_depth`, `carbon_pools`) + `sources.json` (bibliografía verificada) +
@@ -305,8 +321,8 @@ frágil: una lectura de ventana puede cortarse a media franja
 `fetch_hydrography` `source="hydrorivers_global"`/HydroBASINS lakes · `fetch_soil`
 PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) y refinar HSG con Ksat+profundidad · `fetch_climate`
 `source="terraclimate"`/`"chirps"` · `clone_job` · `build_report` ·
-`recommend_model` `[prompt]` · `check_table_vs_raster` `[tool]` (contra la base
-de coeficientes ya creada).
+`recommend_model` `[prompt]` · ampliar el KB de coeficientes (más regiones/biomas,
+glosario, unidades por output).
 
 ### Funciona / verificado
 - Autodetección de `invest.exe` + envs `invest-geo` / `invest-cal`; `invest_env`,
@@ -464,10 +480,20 @@ de coeficientes ya creada).
   (C ∈ [0,1], CN ordenado A≤B≤C≤D y ∈ (0,100], eff/proportion_subsurface ∈ [0,1]);
   `resources.register` cablea `invest://coefficients` + `.../{name}`;
   `coefficients_entry("bogus")` → JSON de error con la lista `known` (no lanza).
-- 152 tests en verde (146 pass — + `test_knowledge_coefficients` 11,
-  `test_hydrography` 16, `test_datastack` 15, +2 en `test_soil`; 6 skips: helpers
-  numpy — `_ra_mm_per_day`, triángulo textural, EPIC K — con numpy ausente del
-  `.venv`; se verifican en `invest-geo`). Registrado y "Connected" en Claude Code.
+- **`check_table_vs_raster`** (`biotable.check_table` + `coefficients.column_ranges()`)
+  end-to-end (2026-08-31, .venv → invest-geo para las clases del ráster) contra
+  `Dummy_InVEST`: `Carbon_Pools.csv` limpio → `warning`/`pass` por 3 `orphan_rows`
+  (95/100/200 no están en el LULC); `01-Biophysical_Table_Execution_SDR.csv`
+  (tabla combinada) → 46 columnas ajenas al MODEL_SPEC de SDR listadas en
+  `unexpected` (y NO se validan sus celdas), `usle_c=0` marcado `out_of_typical`
+  (suelo citado 0.0001); tabla rota a propósito → `error` con `missing_rows`,
+  `empty_required`, invariante `usle_c must be a fraction in [0,1]` y
+  `out_of_typical`. +17 tests (`test_check_table.py`).
+- 170 tests en verde (164 pass — + `test_check_table` 17,
+  `test_knowledge_coefficients` 11, `test_hydrography` 16, `test_datastack` 15,
+  +2 en `test_soil`; 6 skips: helpers numpy — `_ra_mm_per_day`, triángulo
+  textural, EPIC K — con numpy ausente del `.venv`; se verifican en
+  `invest-geo`). Registrado y "Connected" en Claude Code.
 
 ### Pendiente
 - `conda-lock` para solves 100% reproducibles entre plataformas.
@@ -510,9 +536,9 @@ de coeficientes ya creada).
      (esqueleto de tabla biofísica por modelo). Afinar: chunking en `prep.py` para
      rásters gigantes (lee la banda entera); overwrite de shapefiles; poblar
      `datasets: []` del `project.json` desde estas rutinas.
-9. **Playbooks** (prompts MCP) — **PARCIAL** (2026-08-30): `prepare_and_run_model`
-   + `compare_land_use_scenarios` en `prompts.py`. Pendiente: playbook de
-   calibración, playbook multi-servicio.
+9. **Playbooks** (prompts MCP) — **PARCIAL** (2026-08-31): `prepare_and_run_model`
+   + `compare_land_use_scenarios` + `fill_biophysical_table` en `prompts.py`.
+   Pendiente: playbook de calibración, playbook multi-servicio.
 10. **Base de conocimiento** (resources) — **PARCIAL** (2026-08-31): `resources.py`
     con catálogo de modelos, cheat-sheet por modelo, convención de carpetas y
     catálogo de fuentes de datos. **+ base de coeficientes citados HECHA**
@@ -520,9 +546,11 @@ de coeficientes ya creada).
     `.../{name}`): 7 parámetros (`usle_c`, `usle_p`, `ndr_nutrient`,
     `curve_number`, `kc`, `root_depth`, `carbon_pools`) + `sources.json` +
     `README.md` + profile `moorabool_fs28`. Registros legend-agnósticos, cada
-    valor con cita verificada. Pendiente: más parámetros (`eff`/`crit_len` de
-    NDR fuera de zonas semi-áridas, C/P por más regiones), unidades por output,
-    glosario, `check_table_vs_raster`.
+    valor con cita verificada. **+ `check_table_vs_raster` `[tool]` HECHO**
+    (cruza una tabla rellena contra el spec, el ráster y los rangos citados del
+    KB) **+ `fill_biophysical_table` `[prompt]`**. Pendiente: más parámetros
+    (`eff`/`crit_len` de NDR fuera de zonas semi-áridas, C/P por más regiones),
+    unidades por output, glosario.
 11. **Cache content-addressed** por hash de inputs; **snapshots de JSON Schema** +
     diff en CI para detectar cambios breaking al subir versión de InVEST.
 12. **conda-lock** (win-64 / linux-64 / osx-arm64) + imagen Docker (Linux, sin
@@ -591,8 +619,15 @@ receta que el LLM sigue y adapta.
   indexados por atributos semánticos de cobertura, no por una leyenda; crosswalk
   solo orientativo; cada valor con `source_key`+`confidence`+`verified`.
   Verificado (11 tests). Pendiente: cobertura de más regiones/biomas, glosario.
-- `[tool]` `check_table_vs_raster` — toda clase del ráster tiene fila, sin
-  huérfanas, rangos con sentido (ahora cruzable contra la base de coeficientes).
+- ~~`[tool]` `check_table_vs_raster`~~ **HECHO** (2026-08-31) —
+  `workspace/biotable.py::check_table` (puro) + `coefficients.column_ranges()` +
+  tool en `tools.py`. Cobertura (clases sin fila / filas huérfanas / duplicadas)
+  vs el LULC, columnas required/inesperadas, celdas vacías/no-numéricas,
+  invariantes duras + rangos típicos citados del KB (blandos). `severity`
+  error/warning/ok. `+ [prompt] fill_biophysical_table` guía esqueleto →
+  `invest://coefficients` → check. Verificado end-to-end (ver §5). Pendiente:
+  cruzar `crit_len` contra la resolución del DEM, avisar de clases sin
+  `native_veg` en modelos que lo piden.
 
 **Elegir modelo / integración Workbench**
 - `[prompt]` `recommend_model` — de la pregunta del usuario a modelo(s) + datos que
