@@ -450,6 +450,21 @@ def run_fetch_soil(dst_path: str, variable: str, settings: Settings, *,
     }, settings, timeout=_FETCH_TIMEOUT_S, label="soil fetch")
 
 
+def run_fetch_hydrography(dst_path: str, product: str, settings: Settings, *,
+                          source: str = "hydrosheds", region: str | None = None,
+                          level: int = 8,
+                          bbox_wgs84: list[float] | None = None,
+                          aoi_path: str | None = None, clip_to_aoi: bool = False,
+                          buffer_deg: float = 0.05, target_crs: str | None = None,
+                          keep_intermediate: bool = False) -> dict:
+    return _run_geo_worker("invest_mcp.geo.hydrography", {
+        "product": product, "source": source, "region": region, "level": level,
+        "dst_path": dst_path, "bbox_wgs84": bbox_wgs84, "aoi_path": aoi_path,
+        "clip_to_aoi": bool(clip_to_aoi), "buffer_deg": buffer_deg,
+        "target_crs": target_crs, "keep_intermediate": bool(keep_intermediate),
+    }, settings, timeout=_FETCH_TIMEOUT_S, label="hydrography fetch")
+
+
 def run_delineate_watersheds(dem_path: str, outlets_path: str, dst_path: str,
                              settings: Settings, *,
                              threshold_flow_accumulation: float = 1000,

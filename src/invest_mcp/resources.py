@@ -86,7 +86,7 @@ Global Aridity & ET0 Database (CGIAR-CSI); TerraClimate `pet`; or compute
 ## Hydrography
 | Source | Notes |
 |---|---|
-| HydroSHEDS / HydroRIVERS / HydroBASINS | Rivers, basin polygons, flow dir/acc. `hydrosheds.org`. |
+| HydroSHEDS / HydroRIVERS / HydroBASINS | Rivers, basin polygons, flow dir/acc. `hydrosheds.org`. **Wired: `fetch_hydrography` (`product=rivers` / `basins`, HydroSHEDS v1).** |
 | MERIT Hydro | 90 m hydrography derived from MERIT DEM. |
 
 Prefer deriving watersheds from your own conditioned DEM + pour points when a
