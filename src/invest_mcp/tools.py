@@ -11,6 +11,7 @@
                    fetch_hydrography, reproject_layer, clip_to_aoi,
                    align_raster_stack, delineate_watersheds,
                    tables_from_template
+    datastack      import_datastack, export_datastack
     admin          invest_env, allow_input_dir
 
 Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
@@ -37,6 +38,7 @@ from invest_mcp.models import registry
 from invest_mcp.models import spec_translate
 from invest_mcp.workspace import artifacts
 from invest_mcp.workspace import biotable
+from invest_mcp.workspace import datastack as ds_io
 from invest_mcp.workspace import project as project_layout
 from invest_mcp.workspace import readiness as readiness_mod
 from invest_mcp.workspace.sandbox import (
@@ -1090,6 +1092,178 @@ def fetch_hydrography(dst_path: str, product: str, aoi_path: str = "",
     return {"ok": bool(res.get("ok")), "aoi": aoi, **res}
 
 
+def export_datastack(dst_path: str, model_id: str = "", args: dict | None = None,
+                     job_id: str = "", relative: bool = False) -> dict[str, Any]:
+    """Write an InVEST **datastack** (`.invest.json` parameter set) the Workbench
+    can open directly. This is the hand-off point between this server and the
+    InVEST Workbench.
+
+    Give it either `model_id` + `args` (InVEST's own args dict, absolute paths),
+    or `job_id` to lift the model and args straight from a finished/queued run.
+    `dst_path` must end in `.json` (convention: `.invest.json`) and sit under an
+    allowed folder.
+
+    `relative=True` rewrites file-path args relative to `dst_path`'s folder
+    (portable stack you can zip up and move); by default paths stay absolute.
+    Path args are checked against the sandbox and their on-disk existence is
+    reported in `path_args`, but a missing file does not block the write.
+    """
+    if not dst_path.lower().endswith(".json"):
+        return {"ok": False, "error": "dst_path must end in .json (convention: .invest.json)"}
+
+    src_args = dict(args or {})
+    if job_id:
+        job = _STORE.get(job_id)
+        if job is None:
+            return {"ok": False, "error": f"unknown job_id {job_id!r}"}
+        model_id = model_id or job.model_id
+        dsp = Path(job.datastack_path)
+        if not src_args and dsp.is_file():
+            try:
+                src_args = dict(json.loads(dsp.read_text(encoding="utf-8")).get("args", {}))
+            except (OSError, json.JSONDecodeError) as exc:
+                return {"ok": False, "error": f"could not read job datastack: {exc}"}
+    if not model_id:
+        return {"ok": False, "error": "provide model_id (+ args) or a job_id"}
+    if not src_args:
+        return {"ok": False, "error": "no args to export (pass args= or a job_id with a datastack)"}
+
+    try:
+        canonical = registry.resolve_model_id(model_id)
+        spec = registry.get_spec(canonical)
+    except registry.UnknownModelError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    src_args = {k: v for k, v in src_args.items() if k != "workspace_dir"}
+    roots = _SETTINGS.allowed_roots()
+    try:
+        dst = resolve_output_path(dst_path, roots)
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    path_arg_names = list(spec_translate.path_args(spec))
+    reported: list[dict] = []
+    for name in path_arg_names:
+        val = src_args.get(name)
+        if val in (None, "", []):
+            continue
+        entry = {"arg": name, "value": str(val)}
+        try:
+            resolved = resolve_input_path(str(val), roots)
+            entry["exists"] = True
+            entry["resolved"] = str(resolved)
+        except SandboxError as exc:
+            entry["exists"] = Path(str(val)).exists()
+            entry["warning"] = str(exc)
+        reported.append(entry)
+
+    out_args = dict(src_args)
+    made_relative: list[str] = []
+    if relative:
+        out_args, made_relative = ds_io.relativize_args(
+            out_args, path_arg_names, dst.parent)
+
+    try:
+        version = invest_cli.version()
+    except Exception:  # noqa: BLE001 - version string is nice-to-have
+        version = ""
+
+    ds_io.write_parameter_set(dst, canonical, out_args, invest_version=version)
+    return {
+        "ok": True,
+        "path": str(dst),
+        "model_id": canonical,
+        "model_title": spec.get("model_title", canonical),
+        "invest_version": version,
+        "arg_count": len(out_args),
+        "relative": bool(relative),
+        "made_relative": made_relative,
+        "path_args": reported,
+        "note": "Open in the InVEST Workbench, or feed back via "
+                "import_datastack -> validate_invest_args -> run_invest_model.",
+    }
+
+
+def import_datastack(src_path: str) -> dict[str, Any]:
+    """Read an InVEST **datastack** (`.invest.json` parameter set), e.g. one the
+    Workbench saved, and report what it holds: the model, the args, which
+    required inputs are set, and whether each file path resolves on disk.
+
+    Relative path args are resolved against the datastack's own folder. The
+    result plugs straight into `validate_invest_args(model_id, args)` and then
+    `run_invest_model`.
+    """
+    roots = _SETTINGS.allowed_roots()
+    try:
+        src = resolve_input_path(src_path, roots)
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        parsed = ds_io.read_parameter_set(src)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    raw_model = parsed["model_id"]
+    result: dict[str, Any] = {
+        "ok": True,
+        "path": str(src),
+        "model_id_in_file": raw_model,
+        "invest_version_in_file": parsed["invest_version"],
+    }
+
+    try:
+        canonical = registry.resolve_model_id(raw_model) if raw_model else ""
+    except registry.UnknownModelError as exc:
+        return {**result, "ok": False, "error": str(exc),
+                "args": parsed["args"]}
+    if not canonical:
+        return {**result, "ok": False,
+                "error": "datastack has no model_id / model_name",
+                "args": parsed["args"]}
+
+    spec = registry.get_spec(canonical)
+    path_arg_names = list(spec_translate.path_args(spec))
+    args = ds_io.absolutize_args(parsed["args"], path_arg_names, src.parent)
+    args = {k: v for k, v in args.items() if k != "workspace_dir"}
+
+    schema = spec_translate.spec_to_args_schema(spec)
+    required_missing = [r for r in schema.get("required", [])
+                        if args.get(r) in (None, "", [])]
+
+    path_report: list[dict] = []
+    for name in path_arg_names:
+        val = args.get(name)
+        if val in (None, "", []):
+            continue
+        entry = {"arg": name, "value": str(val), "exists": Path(str(val)).exists()}
+        try:
+            resolve_input_path(str(val), roots)
+            entry["in_sandbox"] = True
+        except SandboxError:
+            entry["in_sandbox"] = False
+        path_report.append(entry)
+
+    missing_files = [p["arg"] for p in path_report if not p["exists"]]
+    outside = [p["arg"] for p in path_report if not p["in_sandbox"]]
+    result.update(
+        model_id=canonical,
+        model_title=spec.get("model_title", canonical),
+        args=args,
+        arg_count=len(args),
+        required_missing=required_missing,
+        path_args=path_report,
+        files_missing=missing_files,
+        paths_outside_sandbox=outside,
+        ready=not required_missing and not missing_files,
+        next="validate_invest_args(model_id, args) then run_invest_model(model_id, args)",
+    )
+    if outside:
+        result["hint"] = ("Some inputs are outside the allowed folders; trust "
+                          "their parent with allow_input_dir before running.")
+    return result
+
+
 def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
                          table_arg: str = "", legend_path: str = "",
                          include_optional: bool = True,
@@ -1421,6 +1595,8 @@ _TOOLS = [
     align_raster_stack,
     delineate_watersheds,
     tables_from_template,
+    import_datastack,
+    export_datastack,
     validate_calibration_config,
     run_calibration,
     get_calibration_job,
