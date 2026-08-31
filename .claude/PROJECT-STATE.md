@@ -1,4 +1,4 @@
-# invest-mcp — curated project-state snapshot (2026-08-31, rev 6)
+# invest-mcp — curated project-state snapshot (2026-08-31, rev 7)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
@@ -6,7 +6,21 @@ distilled state.
 
 ## ⟳ RESUME POINT (2026-08-31) — read this first
 
-**Latest work: `check_table_vs_raster` `[tool]` + `fill_biophysical_table`
+**Latest work: `recommend_model` `[prompt]` + `invest://model-guide`
+`[resource]`** — from a real-world question to InVEST model(s). The guide (a
+curated markdown resource, generated against `list_models()` → the 26 installed
+models) gives per model: *answers* / *needs* / *gives* / *pair with* / *not
+for*, grouped by domain (terrestrial water & soil, land carbon & habitat,
+urban, coastal & marine, agriculture & pollination, recreation & scenery,
+terrain/scenario tools) plus an "Outside InVEST's scope" section. The prompt
+orchestrates: sharpen the question → `invest://model-guide` +
+`list_invest_models` → shortlist confirmed against the cheat-sheets →
+`project_readiness` for what data exists → recommend (primary + complements,
+inputs tagged available/needs-prep/missing, outputs, baseline-vs-scenario?) →
+hand off to `prepare_and_run_model` / `compare_land_use_scenarios`. +2 tests,
+full suite **166 passed, 6 skipped**. **Not committed.**
+
+Prior work: **`check_table_vs_raster` `[tool]` + `fill_biophysical_table`
 `[prompt]`** — close the biophysical-table loop on top of the coefficient KB.
 `check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="")` checks
 a *filled* CSV: `coverage` (raster classes with no row, rows for absent codes,
@@ -44,7 +58,7 @@ tests. **Not committed.**
 
 Prior long sessions: the **data-preparation layer** (roadmap 8–10) then the
 **Workbench hand-off** + hydrography + a soil refinement. Now **33 MCP tools +
-6 resources + 3 prompts, 170 tests green** (164 pass + 6 skip — numpy helpers
+7 resources + 4 prompts, 172 tests green** (166 pass + 6 skip — numpy helpers
 absent from `.venv`, verified in `invest-geo`).
 
 **The 11-branch stack is MERGED into `main`** (2026-08-30). `main` = `8a56650`
@@ -76,10 +90,10 @@ bugs; retry a hung `fetch_*` (worker timeout 1800 s).
 
 **Next candidates** (CLAUDE.md §6): extend the coefficient KB (NDR
 `eff`/`crit_len` outside semi-arid tropics, C/P for more regions, per-output
-units, glossary) + `check_table_vs_raster` `[tool]` against it; `fetch_soil`
-PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`), HSG refined with Ksat/depth;
-`fetch_climate` `source=terraclimate|chirps`; `clone_job`; `build_report`;
-`recommend_model` `[prompt]`.
+units, glossary); `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`), HSG
+refined with Ksat/depth; `fetch_climate` `source=terraclimate|chirps`;
+`clone_job` (re-run a finished job's args with edits → feeds
+`compare_scenarios`); `build_report`; `aggregate_to_units`.
 
 ## What the project is
 
@@ -134,7 +148,7 @@ SDK: `mcp` 2.x — `FastMCP` was renamed to `MCPServer`
   writes a numpy JSON first and renders the image in a separate process that can
   crash without taking the run down. Images render fine on Workbench/CI/Linux.
 
-## Tool surface — 33 MCP tools (+ 6 resources, 3 prompts)
+## Tool surface — 33 MCP tools (+ 7 resources, 4 prompts)
 
 Env/discovery: `invest_env`, `allow_input_dir`.
 Model introspection: `list_invest_models`, `describe_invest_model`,
@@ -158,12 +172,16 @@ Calibration: `validate_calibration_config`, `run_calibration`,
 `get_calibration_job`, `cancel_calibration_job`.
 
 Resources: `invest://models`, `invest://model/{id}/cheatsheet`,
-`invest://conventions`, `invest://data-sources`, `invest://coefficients`
+`invest://conventions`, `invest://data-sources`, `invest://model-guide`
+(which model answers which question — curated, per model answers/needs/gives/
+pair/not-for, by domain + out-of-scope), `invest://coefficients`
 (cited-coefficient KB index), `invest://coefficients/{name}` (one parameter file
 / `sources` / `readme` / a worked profile).
 Prompts: `prepare_and_run_model`, `compare_land_use_scenarios`,
 `fill_biophysical_table` (skeleton → match classes to `invest://coefficients`
-records by cover semantics → record provenance → `check_table_vs_raster`).
+records by cover semantics → record provenance → `check_table_vs_raster`),
+`recommend_model` (question → `invest://model-guide` + `list_invest_models` →
+confirm cheat-sheets → `project_readiness` → recommend + hand off).
 
 Reference data (not a tool): `src/invest_mcp/knowledge/coefficients/` — served
 by the two `invest://coefficients` resources via the stdlib loader
@@ -312,7 +330,18 @@ documents conditionals in the description.
   registered; `_choose_table_arg` picks / errors correctly. End-to-end vs
   `Dummy_InVEST` (clean carbon; combined SDR calibration table with 46
   out-of-spec columns; a broken table).
-- 170 tests green (164 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
+- **`recommend_model` + `invest://model-guide`** (2026-08-31) — the guide is a
+  curated markdown resource in `resources.py` written against `list_models()`
+  (26 installed models), each with answers/needs/gives/pair/not-for, by domain,
+  + an "Outside InVEST's scope" section. `recommend_model(question,
+  project_root)` prompt: sharpen → guide + `list_invest_models` → confirm
+  cheat-sheets → `project_readiness` → recommend → hand off. +2 tests (guide is
+  markdown, names the installed `model_id`s, has the answers/needs/gives +
+  out-of-scope sections; prompt substitutes `question`/`project_root`, points at
+  the guide + `list_invest_models` + `project_readiness`, bare form says "no
+  project folder"). `resources.register` now wires `invest://model-guide`;
+  `prompts.register` wires `recommend_model`.
+- 172 tests green (166 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
   texture triangle, EPIC K — with numpy absent from `.venv`; verified in
   `invest-geo`). Registered and "Connected" in Claude Code as `invest`.
 
@@ -366,7 +395,8 @@ parameters + bibliography + Moorabool profile, two `invest://coefficients`
 resources). **Rev 5→6:** `check_table_vs_raster` `[tool]` (#33) +
 `fill_biophysical_table` `[prompt]` — the biophysical-table loop is closed:
 `tables_from_template` → fill from `invest://coefficients` → `check_table_vs_raster`
-→ `validate_invest_args`.
+→ `validate_invest_args`. **Rev 6→7:** `recommend_model` `[prompt]` +
+`invest://model-guide` `[resource]` — question → model(s) + the data each needs.
 
 **Still open** (CLAUDE.md §6 has the full tagged list):
 1. More `fetch_*`: `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) +

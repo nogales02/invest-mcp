@@ -127,6 +127,62 @@ uncertainty to the user; never invent a value.
 """
 
 
+def recommend_model(question: str = "", project_root: str = "") -> str:
+    q = f"> {question.strip()}\n\n" if question.strip() else ""
+    root = f"`{project_root}`" if project_root else "(no project folder given yet)"
+    return f"""\
+# Playbook — recommend the InVEST model(s) for a question
+
+{q}Match a real-world question to one or more InVEST models and lay out what each
+needs. The recommendation is your reasoning to make — these are the steps and the
+reference material. Project folder: {root}.
+
+1. **Sharpen the question with the user.** Nail down:
+   - the ecosystem service / outcome (water quantity, seasonal flow, erosion &
+     sediment, nutrients & water quality, carbon, habitat/biodiversity,
+     pollination, urban flooding, urban heat, green-space access, coastal
+     exposure, blue carbon, recreation, scenery, energy…);
+   - the decision it informs (baseline accounting, land-use change, restoration
+     siting, BMP targeting, infrastructure/permitting, a scenario trade-off);
+   - geography and scale (which watershed / city / coastline), and time frame;
+   - whether it is a single assessment or a **baseline vs scenario** comparison.
+
+2. **Read the reference.** `invest://model-guide` maps questions → models with
+   each model's headline inputs, outputs and common pairings. Get the installed
+   list with `list_invest_models()` (or `invest://models`) — only recommend
+   models that appear there, and note the exact `model_id`.
+
+3. **Shortlist and confirm.** For each candidate read
+   `invest://model/{{model_id}}/cheatsheet` (or `describe_invest_model(model_id)`).
+   Check it actually answers the question; note its required inputs (with units),
+   key outputs, and its main assumptions / limitations. Drop candidates that
+   don't fit and say why.
+
+4. **Check what data exists.** If a project folder is given, run
+   `project_readiness(project_root, models=[shortlist])` to see, per model, which
+   required inputs are already present, which need preparation, and which are
+   missing. Otherwise list the inputs from the cheat-sheet.
+
+5. **Recommend.** Give a primary model and any complements (e.g. `sdr` + `ndr`
+   for an erosion + water-quality story on one watershed; `carbon` +
+   `habitat_quality` for a land-use-change assessment; `seasonal_water_yield`
+   alongside `annual_water_yield` for timing). For each recommended model state:
+   - why it fits, and what it will *not* tell them;
+   - the required inputs, tagged available / needs-prep / missing (step 4), each
+     with a source from `invest://data-sources` where relevant;
+   - the outputs that answer the question, with units;
+   - whether they need a baseline-vs-scenario run.
+
+6. **Hand off.** For the chosen model, follow `prepare_and_run_model` (single
+   assessment) or `compare_land_use_scenarios` (trade-off); build its
+   biophysical / lookup table with `fill_biophysical_table`.
+
+If the question is outside InVEST's scope (real-time forecasting, hydrodynamic
+inundation, species-distribution modelling, air-quality dispersion, detailed
+groundwater), say so and stop — see the last section of `invest://model-guide`.
+"""
+
+
 def register(server) -> None:
     server.prompt(
         name="prepare_and_run_model",
@@ -147,3 +203,10 @@ def register(server) -> None:
                     "range-checked biophysical / lookup table using the "
                     "invest://coefficients knowledge base and check_table_vs_raster.",
     )(fill_biophysical_table)
+    server.prompt(
+        name="recommend_model",
+        title="Recommend the InVEST model(s) for a question",
+        description="From a real-world question to InVEST model(s) plus the data "
+                    "each needs, using invest://model-guide, the per-model "
+                    "cheat-sheets and project_readiness.",
+    )(recommend_model)

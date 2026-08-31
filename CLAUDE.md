@@ -125,8 +125,8 @@ src/invest_mcp/
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
   tools.py           las 33 tools MCP + register(server); `_choose_table_arg` (helper compartido por tables_from_template / check_table_vs_raster)
-  resources.py       6 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, base de coeficientes citados + sus ficheros) + register(server)
-  prompts.py         3 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table) + register(server)
+  resources.py       7 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, guía de modelos = qué modelo responde a qué pregunta, base de coeficientes citados + sus ficheros) + register(server)
+  prompts.py         4 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table, recommend_model) + register(server)
   knowledge/
     __init__.py      paquete de DATOS de referencia (nunca lógica): base de coeficientes citados
     coefficients.py  loader stdlib puro: entry(name)/index()/PARAMETERS/PROFILES; lee los JSON de coefficients/ y los sirve como texto. + parameter_for_column(col)/column_ranges() → mapea columna InVEST (usle_c, cn_a, kc_6, c_above…) a su parámetro del KB + su typical_range citado (lo usa check_table_vs_raster)
@@ -153,7 +153,7 @@ tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_hydro, test_biotable, test_fetch,
                      test_climate, test_soil, test_hydrography,
                      test_datastack, test_knowledge_coefficients, test_check_table
-                     (170 tests: 164 pass + 6 skip sin numpy)
+                     (172 tests: 166 pass + 6 skip sin numpy)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
@@ -171,7 +171,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (33 tools) + 6 resources + 3 prompts
+## 4. Tool surface (33 tools) + 7 resources + 4 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -216,6 +216,12 @@ tool; solo datos, nunca decisiones:
 - `invest://conventions` — el layout de proyecto + campos de `project.json`.
 - `invest://data-sources` — catálogo curado de fuentes (DEM, land cover, clima,
   suelo, hidrografía) con URLs y notas.
+- `invest://model-guide` — guía markdown: qué modelo InVEST responde a qué
+  pregunta del mundo real, con las entradas/salidas cabecera de cada modelo y
+  sus emparejamientos habituales, agrupado por dominio (agua terrestre, carbono
+  y hábitat, urbano, costero/marino, agricultura, recreación, herramientas de
+  terreno) + qué queda fuera del alcance de InVEST. Mapa de partida para
+  `recommend_model`; confirmar contra el cheat-sheet.
 - `invest://coefficients` — índice de la base de coeficientes citados: por
   parámetro (resource, aka, models, invest_column, units, definition,
   record_count, source_keys), profiles, cómo elegir, bibliografía.
@@ -236,6 +242,14 @@ tool; solo datos, nunca decisiones:
   cobertura con un registro de `invest://coefficients` por semántica (no por
   código), anotar la procedencia en `logs/`, y `check_table_vs_raster` hasta
   `ok` o cada warning justificado.
+- `recommend_model(question, project_root)` — de la pregunta del usuario a
+  modelo(s) InVEST + los datos que necesita cada uno: afinar la pregunta →
+  `invest://model-guide` + `list_invest_models` → shortlist confirmada contra
+  los cheat-sheets → `project_readiness` para ver qué datos ya están → recomendar
+  (primario + complementos, entradas disponible/preparar/falta, salidas, si hace
+  falta baseline-vs-escenario) → hand-off a `prepare_and_run_model` /
+  `compare_land_use_scenarios`. Dice claramente cuándo la pregunta está fuera de
+  InVEST.
 
 Convenciones:
 - `args` es el dict de args de InVEST tal cual; **rutas absolutas**.
@@ -253,10 +267,17 @@ Convenciones:
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
 8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
 `Dummy_InVEST` o un bbox de los Alpes.
-**33 tools + 6 resources + 3 prompts. 170 tests en verde** (`pytest -q`, 164
+**33 tools + 7 resources + 4 prompts. 172 tests en verde** (`pytest -q`, 166
 pass + 6 skip sin numpy).
 
-**Última sesión (2026-08-31, cont.):** `check_table_vs_raster` `[tool]` +
+**Última sesión (2026-08-31, cont.):** `recommend_model` `[prompt]` +
+`invest://model-guide` `[resource]` — de la pregunta del usuario a modelo(s)
+InVEST. La guía cubre los 26 modelos instalados (answers/needs/gives/pair/
+not-for, por dominio) + qué queda fuera de InVEST; el prompt orquesta
+afinar-pregunta → guía + `list_invest_models` → confirmar cheat-sheets →
+`project_readiness` → recomendar → hand-off. +2 tests.
+
+**Sesión previa (2026-08-31, cont.):** `check_table_vs_raster` `[tool]` +
 `fill_biophysical_table` `[prompt]` — cierran el lazo de la tabla biofísica.
 `check_table_vs_raster` valida una tabla rellena (cobertura vs clases del
 ráster, columnas, celdas, invariantes duras + rangos típicos citados del KB);
@@ -321,7 +342,7 @@ frágil: una lectura de ventana puede cortarse a media franja
 `fetch_hydrography` `source="hydrorivers_global"`/HydroBASINS lakes · `fetch_soil`
 PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) y refinar HSG con Ksat+profundidad · `fetch_climate`
 `source="terraclimate"`/`"chirps"` · `clone_job` · `build_report` ·
-`recommend_model` `[prompt]` · ampliar el KB de coeficientes (más regiones/biomas,
+`aggregate_to_units` · ampliar el KB de coeficientes (más regiones/biomas,
 glosario, unidades por output).
 
 ### Funciona / verificado
@@ -489,7 +510,17 @@ glosario, unidades por output).
   (suelo citado 0.0001); tabla rota a propósito → `error` con `missing_rows`,
   `empty_required`, invariante `usle_c must be a fraction in [0,1]` y
   `out_of_typical`. +17 tests (`test_check_table.py`).
-- 170 tests en verde (164 pass — + `test_check_table` 17,
+- **`recommend_model` `[prompt]` + `invest://model-guide` `[resource]`**
+  (2026-08-31): la guía se generó contra la lista real de modelos instalados
+  (`list_models()` → 26: awy, swy, sdr, ndr, carbon, fc, hq, hra, pollination,
+  crop_production_*, recreation, scenic_quality, coastal_*, wave/wind_energy,
+  urban_* (cooling/ufrm/stormwater/una/umh), delineateit, routedem,
+  scenario_generator_proximity). +2 tests: la guía es markdown y nombra los
+  `model_id` instalados + secciones answers/needs/gives + "Outside InVEST's
+  scope"; el prompt sustituye `question`/`project_root`, apunta a
+  `invest://model-guide` + `list_invest_models` + `project_readiness`, y su
+  forma sin args dice "no project folder".
+- 172 tests en verde (166 pass — + `test_check_table` 17,
   `test_knowledge_coefficients` 11, `test_hydrography` 16, `test_datastack` 15,
   +2 en `test_soil`; 6 skips: helpers numpy — `_ra_mm_per_day`, triángulo
   textural, EPIC K — con numpy ausente del `.venv`; se verifican en
@@ -537,11 +568,12 @@ glosario, unidades por output).
      rásters gigantes (lee la banda entera); overwrite de shapefiles; poblar
      `datasets: []` del `project.json` desde estas rutinas.
 9. **Playbooks** (prompts MCP) — **PARCIAL** (2026-08-31): `prepare_and_run_model`
-   + `compare_land_use_scenarios` + `fill_biophysical_table` en `prompts.py`.
-   Pendiente: playbook de calibración, playbook multi-servicio.
+   + `compare_land_use_scenarios` + `fill_biophysical_table` + `recommend_model`
+   en `prompts.py`. Pendiente: playbook de calibración, playbook multi-servicio.
 10. **Base de conocimiento** (resources) — **PARCIAL** (2026-08-31): `resources.py`
-    con catálogo de modelos, cheat-sheet por modelo, convención de carpetas y
-    catálogo de fuentes de datos. **+ base de coeficientes citados HECHA**
+    con catálogo de modelos, cheat-sheet por modelo, convención de carpetas,
+    catálogo de fuentes de datos y **`invest://model-guide`** (qué modelo para
+    qué pregunta — HECHO). **+ base de coeficientes citados HECHA**
     (`knowledge/coefficients/`, resources `invest://coefficients` +
     `.../{name}`): 7 parámetros (`usle_c`, `usle_p`, `ndr_nutrient`,
     `curve_number`, `kc`, `root_depth`, `carbon_pools`) + `sources.json` +
@@ -630,8 +662,12 @@ receta que el LLM sigue y adapta.
   `native_veg` en modelos que lo piden.
 
 **Elegir modelo / integración Workbench**
-- `[prompt]` `recommend_model` — de la pregunta del usuario a modelo(s) + datos que
-  necesita cada uno (razonamiento del LLM, apoyado por `invest://models`).
+- ~~`[prompt]` `recommend_model`~~ **HECHO** (2026-08-31) — `prompts.py` +
+  `invest://model-guide` `[resource]` (qué modelo responde a qué pregunta, los
+  26 modelos instalados por dominio + fuera-de-alcance). El prompt: afinar la
+  pregunta → guía + `list_invest_models` → confirmar cheat-sheets →
+  `project_readiness` → recomendar (primario + complementos, entradas
+  disponible/preparar/falta, salidas, baseline-vs-escenario) → hand-off.
 - ~~`[tool]` `import_datastack` / `export_datastack`~~ **HECHO** (2026-08-30) —
   `workspace/datastack.py` (stdlib puro) + tools. Round-trip del parameter set
   `.invest.json` (`{args, model_id, invest_version}`) con el Workbench; tolera
