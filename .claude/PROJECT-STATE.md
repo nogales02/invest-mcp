@@ -11,16 +11,16 @@ Two long sessions: the **data-preparation layer** (roadmap 8–10) then the
 4 resources + 2 prompts, 141 tests green** (6 skip — numpy helpers absent from
 `.venv`, verified in `invest-geo`).
 
-**11 stacked branches on `main`, NONE merged** — each PR targets the branch below,
-merge bottom-up (GitHub auto-retargets the next to `main`) or squash the stack:
-`data-prep-routines` → `readiness-resources-prompts` → `delineate-watersheds` →
-`tables-from-template` → `fetch-dem` → `fetch-landcover` → `fetch-climate` →
-`fetch-soil` → `fetch-hydrography` (26423d2) → `datastack-io` (e2d28c6) →
-`fetch-soil-bedrock` (HEAD). All pushed to `github.com/nogales02/invest-mcp`.
-`gh` CLI is NOT installed here → PRs open via the GitHub REST API with the git
-credential-manager token. PRs #1–#8 open; #9 (fetch-hydrography→fetch-soil),
-#10 (datastack-io→fetch-hydrography), #11 (fetch-soil-bedrock→datastack-io) to
-be opened the same way.
+**The 11-branch stack is MERGED into `main`** (2026-08-30). `main` = `8a56650`
+(`origin/main`), 11 bottom-up merge commits (PRs #2, #12, #4, #5, #6, #7, #8, #1,
+#9, #10, #11 — the original #3 auto-closed when its base branch was deleted and
+was recreated as #12). Every feature branch deleted, local and `origin`; only
+`main` remains. Merges via the GitHub REST API with the git credential-manager
+token; branch deletes via `git push origin --delete`. `gh` CLI is NOT installed.
+Merge order (linear stack, zero conflicts): data-prep-routines →
+readiness-resources-prompts → delineate-watersheds → tables-from-template →
+fetch-dem → fetch-landcover → fetch-climate → fetch-soil → fetch-hydrography →
+datastack-io → fetch-soil-bedrock.
 
 **Data-prep chain, all built & verified end-to-end:** `scaffold_project` →
 `fetch_dem` / `fetch_landcover` / `fetch_climate` / `fetch_soil` /
