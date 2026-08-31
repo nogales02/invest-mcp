@@ -1,0 +1,73 @@
+{
+  "$schema_version": "1.0",
+  "parameter": "kc",
+  "aka": ["crop coefficient", "evapotranspiration coefficient", "Kc"],
+  "models": ["awy", "swy"],
+  "invest_arg": "biophysical_table_path",
+  "invest_column": {"awy": "Kc (single annual / growing-season value)", "swy": "Kc_1 .. Kc_12 (one per month)"},
+  "units": "dimensionless (ratio of actual-cover ET to reference ET0)",
+  "definition": "Multiplier on reference evapotranspiration (ET0) that scales it to the evapotranspiration of a specific vegetation cover. ~1.0-1.2 for full dense canopy at peak growth; ~0.2-0.4 for bare soil / dormant cover; can exceed 1 for tall well-watered vegetation (forest, wetland).",
+  "typical_range": [0.1, 1.2],
+  "how_to_estimate": {
+    "summary": "Two routes. (1) FAO-56 tabulated Kc by crop and growth stage (Kc_ini, Kc_mid, Kc_end) - best for cropland. (2) Remote sensing: derive Kc per class from a Leaf Area Index (or fractional-cover / NDVI) time series using the FAO-56 density relationship, then average per land-cover class and month. FS28 used route (2) from Copernicus 300 m LAI (2023-2024), extinction coefficient k = 0.5, capped at Kc <= 1.2, producing a monthly Kc per class.",
+    "methods": [
+      {"name": "FAO-56 crop table", "source_key": "allen1998", "notes": "Kc_mid: cereals ~1.15, legumes ~1.10, pasture ~0.85-1.0, deciduous orchard ~0.9-1.15, conifer forest ~1.0. Kc_ini ~0.3-0.5. Bare soil ~0.15-0.3."},
+      {"name": "LAI / fractional-cover ratio", "source_key": "allen1998", "notes": "Kc from vegetation density via Beer-Lambert (k~0.5); gives a spatially and seasonally varying Kc without crop calendars."}
+    ]
+  },
+  "how_to_choose": "For SWY you need the seasonal shape - a summer-growing rainfed crop and an evergreen forest have very different monthly Kc even at the same annual mean. For AWY you need one representative value: use the growing-season Kc for seasonal vegetation, the annual mean for evergreen. The LAI-derived annual means below are for a temperate, winter-wet SE Australian climate with strong seasonality and will be lower than FAO-56 peak Kc; do not transfer them to an aseasonal tropical site. Record the method (FAO-56 table vs LAI-derived) with the value.",
+  "records": [
+    {
+      "id": "kc/annual-mean/lai-derived/temperate-seasonal/allen1998",
+      "cover": {"form": "multiple", "label_source": "DEECA land-cover classes, Moorabool basin", "condition": "as mapped 2019", "method": "FAO-56 Kc from Copernicus 300 m LAI time series, k=0.5, cap 1.2"},
+      "values": {},
+      "by_source": {
+        "_note": "annual-mean Kc; monthly values in the moorabool_fs28 profile. Temperate, Mediterranean-type climate (winter-wet, summer-dry), strong seasonality.",
+        "built_environment": 0.39,
+        "urban_area": 0.46,
+        "disturbed_ground_bare": 0.38,
+        "exotic_pasture_grassland": 0.53,
+        "dryland_cropping": 0.35,
+        "other_exotic_tree_cover": 0.52,
+        "hardwood_plantation_eucalyptus": 0.73,
+        "horticulture_irrigated": 0.52,
+        "native_pasture_grassland": 0.39,
+        "native_scrubland": 0.53,
+        "treed_native_vegetation": 0.64,
+        "scattered_native_trees": 0.43,
+        "natural_low_cover": 0.38,
+        "conifer_plantation_pinus_radiata": 1.08,
+        "water": 0.56,
+        "wetland_seasonal": 0.51,
+        "wetland_perennial": 0.61
+      },
+      "context": {"biome": "temperate (Mediterranean-type, winter-wet)", "region": "Moorabool River basin, Victoria, Australia", "spatial_scale": "300 m LAI resampled to 30 m, monthly, 2023-2024", "study_area": "FS28 Moorabool parameterisation"},
+      "source_key": "allen1998", "confidence": "medium",
+      "caveats": "Annual means are depressed by winter senescence / summer moisture stress. Evergreen classes (conifer 1.08, hardwood 0.73, treed native 0.64) hold up; deciduous/annual classes (dryland cropping 0.35) swing widely month to month - use the monthly array for SWY. Conifer 1.08 for Pinus radiata is consistent with FAO-56 conifer forest Kc ~1.0.",
+      "provenance": "FS28 masterfile, sheet 'Kc' (second block, 'Crop coefficient (kc)')"
+    },
+    {
+      "id": "kc/fao56-reference/by-form/global/allen1998",
+      "cover": {"form": "multiple", "label_source": "FAO-56 reference crop groups"},
+      "values": {},
+      "by_source": {
+        "_note": "FAO-56 mid-season Kc (Kc_mid) for well-watered full cover; initial (Kc_ini) in parentheses. Adjust down for water stress / partial cover.",
+        "bare_soil": "0.15-0.30",
+        "annual_cereals_wheat_maize": "1.15 (0.30)",
+        "legumes_pulses": "1.10 (0.40)",
+        "vegetables": "0.95-1.15 (0.50-0.70)",
+        "grass_pasture_grazing": "0.85-1.00 (0.30-0.40)",
+        "turf_dense": "0.90-0.95",
+        "deciduous_orchard_no_cover": "0.90-1.15 (0.45-0.60)",
+        "vineyard": "0.70-0.75 (0.30)",
+        "conifer_forest": "1.00 (1.00)",
+        "open_water": "1.05-1.25",
+        "wetland_cattails_bulrush": "1.00-1.20"
+      },
+      "context": {"biome": "global (method reference)", "region": "global", "spatial_scale": "crop plot", "study_area": "FAO Irrigation & Drainage Paper 56, Tables 12 & 17"},
+      "source_key": "allen1998", "confidence": "high",
+      "caveats": "These are peak-growth values under standard conditions. For AWY's single Kc, weight by the fraction of the year the cover is active. For SWY, distribute across months following the crop's growth curve (initial -> development -> mid -> late).",
+      "provenance": "standard reference (FAO-56); added to complement the FS28 LAI-derived table"
+    }
+  ]
+}

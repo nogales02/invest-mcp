@@ -30,5 +30,12 @@ invest-mcp = "invest_mcp.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+invest_mcp = [
+    "knowledge/coefficients/*.json",
+    "knowledge/coefficients/*.md",
+    "knowledge/coefficients/profiles/*.json",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

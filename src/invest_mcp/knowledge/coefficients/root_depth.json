@@ -1,0 +1,132 @@
+{
+  "$schema_version": "1.0",
+  "parameter": "root_depth",
+  "aka": ["rooting depth", "maximum root depth", "restricting-layer depth for roots"],
+  "models": ["awy"],
+  "invest_arg": "biophysical_table_path",
+  "invest_column": "root_depth",
+  "units": "mm (integer)",
+  "definition": "The depth of soil that a land-cover class's roots can draw water from, in InVEST Annual Water Yield. The model uses min(root_depth, soil depth) as the plant-available water column, so root_depth only bites where it is shallower than the soil. Commonly set to either the maximum rooting depth of the vegetation type, or the depth containing ~95% of root biomass (D95).",
+  "typical_range": [200, 15000],
+  "notes_on_convention": "The InVEST User Guide describes root_depth as 'the maximum root depth for vegetated land use classes ... often given as the depth at which 95% of root biomass occurs.' Two defensible fillings: (a) maximum rooting depth from Canadell et al. (1996) - larger, used by many published InVEST AWY studies; (b) D95 from Schenk & Jackson (2002) - the 95%-biomass depth, closer to the UG wording and usually the better hydrological choice because the deepest 5% of roots contribute little transpiration. Pick one convention and apply it consistently. Non-vegetated classes (bare, built, water): set a small nominal value (e.g. 1-30 mm) or per the UG.",
+  "how_to_estimate": {
+    "summary": "Look up by biome and growth form. Prefer a regional root-profile study if one exists for your ecosystem. Then cap at the local soil / regolith depth (see fetch_soil variable=depth_to_bedrock).",
+    "methods": [
+      {"name": "maximum rooting depth by biome/form", "source_key": "canadell1996", "notes": "290 obs, 253 species, 11 biomes. Global mean 4.6 m."},
+      {"name": "D95 (95%-biomass depth) by biome", "source_key": "schenk2002", "notes": "475 profiles. Global ~2.0 m; ~0.4/0.7/1.1 m hold 80/90/95% of roots globally."},
+      {"name": "cumulative-root-fraction model", "source_key": "jackson1996", "notes": "beta model: cumulative root fraction = 1 - beta^depth_cm; solve for the depth at your target fraction per biome."},
+      {"name": "FAO-56 effective rooting depth (crops)", "source_key": "allen1998", "notes": "cereals 1.0-1.8 m, maize 1.0-1.7 m, pasture 0.5-1.5 m, vegetables 0.3-1.0 m, deciduous orchard 1.0-2.0 m, vines 1.0-2.0 m."}
+    ]
+  },
+  "how_to_choose": "Match by growth form first (tree > shrub > herbaceous), then biome/water regime (water-limited woody systems root far deeper than mesic or cold ones). If your AWY run is sensitive to root_depth, it usually means soils are deep enough that root_depth is the binding constraint - then the convention choice (max vs D95) matters and should be stated. Where soils are shallow, any reasonable value > soil depth gives the same result.",
+  "records": [
+    {
+      "id": "root_depth/forest/tropical-evergreen/global/canadell1996",
+      "cover": {"form": "forest", "label_source": "Tropical evergreen forest", "condition": "undisturbed"},
+      "values": {"max_root_depth_mm": 7300, "d95_mm": 4900},
+      "range_mm": [3700, 18000],
+      "context": {"biome": "tropical humid", "region": "global synthesis", "spatial_scale": "plot / excavation", "study_area": "Canadell et al. 1996 Table; Schenk & Jackson 2002"},
+      "source_key": "canadell1996", "confidence": "medium",
+      "caveats": "Individual maxima to 18 m; D95 much shallower. Usually soil/regolith depth limits this in practice.",
+      "provenance": "standard reference (added; not in FS28 masterfile)"
+    },
+    {
+      "id": "root_depth/forest/tropical-deciduous/global/canadell1996",
+      "cover": {"form": "forest", "label_source": "Tropical deciduous forest / dry forest", "condition": "undisturbed"},
+      "values": {"max_root_depth_mm": 3700, "d95_mm": 3000},
+      "range_mm": [2000, 4700],
+      "context": {"biome": "tropical dry", "region": "global synthesis", "spatial_scale": "plot / excavation", "study_area": "Canadell et al. 1996"},
+      "source_key": "canadell1996", "confidence": "medium",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/savanna/tropical-grassland/global/canadell1996",
+      "cover": {"form": "grassland / savanna", "label_source": "Tropical grassland and savanna", "condition": "natural"},
+      "values": {"max_root_depth_mm": 15000, "d95_mm": 4000},
+      "range_mm": [3000, 68000],
+      "context": {"biome": "tropical / subtropical seasonally dry", "region": "global synthesis (deep records from central Kalahari)", "spatial_scale": "plot / excavation", "study_area": "Canadell et al. 1996"},
+      "source_key": "canadell1996", "confidence": "low",
+      "caveats": "The 15 m biome mean is driven by a few extreme phreatophytes (Boscia albitrunca to 68 m). For hydrology use the D95 (~3-5 m), not the maximum.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/shrubland/sclerophyll-mediterranean/global/canadell1996",
+      "cover": {"form": "shrubland", "label_source": "Sclerophyllous shrubland and woodland (Mediterranean-type)", "condition": "natural"},
+      "values": {"max_root_depth_mm": 5200, "d95_mm": 3500},
+      "range_mm": [1500, 40000],
+      "context": {"biome": "Mediterranean / semi-arid", "region": "global synthesis", "spatial_scale": "plot / excavation", "study_area": "Canadell et al. 1996"},
+      "source_key": "canadell1996", "confidence": "medium",
+      "caveats": "Applies to much Australian mallee / dry sclerophyll scrub. Deep roots exploit stored soil water through the dry season.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/forest/temperate-conifer/global/canadell1996",
+      "cover": {"form": "forest", "label_source": "Temperate coniferous forest / plantation", "canopy_density": "closed"},
+      "values": {"max_root_depth_mm": 3900, "d95_mm": 2000},
+      "range_mm": [1500, 7500],
+      "context": {"biome": "temperate", "region": "global synthesis", "spatial_scale": "plot / excavation", "study_area": "Canadell et al. 1996"},
+      "source_key": "canadell1996", "confidence": "medium",
+      "caveats": "Reasonable default for Pinus radiata plantation on deep soils.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/forest/temperate-broadleaf/global/canadell1996",
+      "cover": {"form": "forest", "label_source": "Temperate deciduous / broadleaf forest (incl. eucalypt)", "canopy_density": "closed"},
+      "values": {"max_root_depth_mm": 2900, "d95_mm": 2000},
+      "range_mm": [2000, 4400],
+      "context": {"biome": "temperate", "region": "global synthesis (eucalypt maxima from Australia are deeper)", "spatial_scale": "plot / excavation", "study_area": "Canadell et al. 1996"},
+      "source_key": "canadell1996", "confidence": "medium",
+      "caveats": "SE Australian eucalypt forest can root well past 2.9 m where regolith allows (records to 10-40 m for some species); soil depth normally governs in AWY.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/grassland/temperate/global/canadell1996",
+      "cover": {"form": "grassland", "label_source": "Temperate grassland / perennial pasture", "condition": "good cover"},
+      "values": {"max_root_depth_mm": 2600, "d95_mm": 1500},
+      "range_mm": [1000, 6300],
+      "context": {"biome": "temperate", "region": "global synthesis", "spatial_scale": "plot / excavation", "study_area": "Canadell et al. 1996; herbaceous growth-form mean 2.6 m"},
+      "source_key": "canadell1996", "confidence": "medium",
+      "caveats": "Deep-rooted perennial C3/C4 grasses. Annual exotic pasture and heavily grazed swards are shallower (500-1000 mm).",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/cropland/annual/global/allen1998",
+      "cover": {"form": "cropland", "label_source": "Annual field crops (cereals, pulses, oilseeds)", "condition": "conventionally managed"},
+      "values": {"effective_root_depth_mm": 1500},
+      "range_mm": [600, 1800],
+      "context": {"biome": "global (crop reference)", "region": "global", "spatial_scale": "crop plot", "study_area": "FAO-56 Table 22 effective rooting depth"},
+      "source_key": "allen1998", "confidence": "high",
+      "caveats": "FAO-56 'effective' rooting depth (where most water uptake occurs): wheat/barley 1.0-1.8 m, maize 1.0-1.7 m, soybean 0.6-1.3 m, vegetables 0.3-1.0 m. Use the mid value unless you know the crop.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/cropland/irrigated-horticulture/global/allen1998",
+      "cover": {"form": "cropland", "label_source": "Irrigated pasture, orchards, vines, vegetables", "condition": "irrigated"},
+      "values": {"effective_root_depth_mm": 1200},
+      "range_mm": [300, 2000],
+      "context": {"biome": "global (crop reference)", "region": "global", "spatial_scale": "crop plot", "study_area": "FAO-56 Table 22"},
+      "source_key": "allen1998", "confidence": "medium",
+      "caveats": "Vegetables shallow (0.3-1.0 m), deciduous orchard and vines deeper (1.0-2.0 m), irrigated pasture 0.5-1.5 m. Irrigation often keeps effective uptake shallow regardless of potential depth.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/tundra-boreal/global/canadell1996",
+      "cover": {"form": "forest / tundra", "label_source": "Boreal forest and tundra", "condition": "permafrost or cold-limited"},
+      "values": {"max_root_depth_mm": 2000, "d95_mm": 500},
+      "range_mm": [300, 2000],
+      "context": {"biome": "boreal / arctic", "region": "global synthesis", "spatial_scale": "plot / excavation", "study_area": "Canadell et al. 1996 (boreal forest mean 2.0 m); tundra species from 0.3 m"},
+      "source_key": "canadell1996", "confidence": "medium",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "root_depth/non-vegetated/nominal",
+      "cover": {"form": "bare / built / water / permanent ice", "label_source": "non-vegetated classes"},
+      "values": {"root_depth_mm": 1},
+      "range_mm": [1, 30],
+      "context": {"biome": "n/a", "region": "n/a", "study_area": "InVEST AWY convention"},
+      "source_key": "allen1998", "confidence": "high",
+      "caveats": "A tiny non-zero value. Some workflows use 30 mm bare-soil evaporation depth. These classes usually also have LULC_veg = 0, so AWY uses the non-vegetated ET path anyway.",
+      "provenance": "InVEST AWY convention (added)"
+    }
+  ]
+}

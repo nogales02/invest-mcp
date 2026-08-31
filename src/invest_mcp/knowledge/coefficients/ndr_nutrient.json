@@ -1,0 +1,203 @@
+{
+  "$schema_version": "1.0",
+  "parameter": "ndr_nutrient",
+  "aka": ["NDR biophysical table", "nutrient loads and retention efficiencies"],
+  "models": ["ndr"],
+  "invest_arg": "biophysical_table_path",
+  "invest_column": ["load_n", "load_p", "eff_n", "eff_p", "crit_len_n", "crit_len_p", "proportion_subsurface_n"],
+  "units": {
+    "load_n": "kg/ha/yr", "load_p": "kg/ha/yr",
+    "eff_n": "fraction 0-1 (maximum retention efficiency of this cover)",
+    "eff_p": "fraction 0-1",
+    "crit_len_n": "m (distance over which retention reaches ~half its maximum)",
+    "crit_len_p": "m",
+    "proportion_subsurface_n": "fraction 0-1 of the N load that travels subsurface (P has no subsurface term in InVEST NDR)"
+  },
+  "definition": "Per-land-cover nutrient export loads (a 'nutrient runoff proxy'-weighted source term) and the vegetation's capacity to retain nutrients moving through it. InVEST NDR distributes each pixel's load downslope and removes a fraction as flow passes through retentive cover, governed by eff and crit_len.",
+  "typical_range": {"load_n": [0, 90], "load_p": [0, 5], "eff_n": [0, 0.85], "eff_p": [0, 0.8], "crit_len_n": [10, 300], "crit_len_p": [10, 30]},
+  "how_to_estimate": {
+    "summary": "Loads: from an export-coefficient dataset for your region (best), or from fertiliser application rates (Ludemann 2022) times an export fraction, or adopt a published InVEST NDR parameter set from a comparable biome. Efficiencies and critical lengths: adopt from a published InVEST NDR study - very few are measured directly; the InVEST User Guide and Redhead et al. (2018) / Raji et al. (2020) are the common starting points.",
+    "methods": [
+      {"name": "adopt a full published NDR set", "source_key": "raji2020", "notes": "Complete, InVEST-ready set incl. crit_len and proportion_subsurface. Semi-arid tropical context."},
+      {"name": "temperate export-coefficient set", "source_key": "redhead2018", "notes": "N/P loads + retention by habitat, calibrated to GB river data. 'Retention' = eff. No crit_len / subsurface in the reproduced table."},
+      {"name": "fertiliser rate x export fraction", "source_key": "ludemann2022", "notes": "Country x crop N and P2O5 rates (P = P2O5 x 0.4364). Multiply by a runoff/leaching export fraction - not a load by itself."},
+      {"name": "cross-check", "source_key": "hooftman2025", "notes": "Where the InVEST NDR is weak across Europe and how errors attribute."}
+    ]
+  },
+  "how_to_choose": "Loads are climate- and agronomy-specific - match region and cropping intensity, not just the word 'cropland'. eff and crit_len are more transferable but still depend on vegetation structure: dense woody buffers retain more over shorter distances (high eff, short-to-moderate crit_len); grass strips need more length. Keep eff_p <= ~0.8 and crit_len_p short (10-30 m) - P moves mostly with sediment and drops out fast. proportion_subsurface_n is high (0.4-0.5) under woody/perennial cover (much N goes to groundwater) and low (0.2-0.3) under settlements/cropland with overland dominance. Always tag the source_key.",
+  "records": [
+    {
+      "id": "ndr/cropland/rainfed-intensive/semi-arid-tropical/raji2020",
+      "cover": {"form": "cropland", "label_source": "Cropland", "condition": "conventionally managed", "management": "rainfed, fertilised annual crops"},
+      "values": {"load_n": 89, "load_p": 3.57, "eff_n": 0.5, "eff_p": 0.48, "crit_len_n": 25, "crit_len_p": 15, "proportion_subsurface_n": 0.3},
+      "context": {"biome": "tropical semi-arid (Sudano-Sahelian)", "region": "Sokoto-Rima basin, NW Nigeria", "spatial_scale": "basin, InVEST NDR", "study_area": "spatiotemporal nutrient retention 1992-2015"},
+      "source_key": "raji2020", "confidence": "medium",
+      "caveats": "High load_n reflects the study's fertilised cropland. FS28 reused this row wholesale for Australian dryland cropping and then cited Ludemann et al. (2022) as a cross-check on the Australian rate. Re-derive load for your fertiliser regime.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', table 'Raji et al. (2020)' + assembled Moorabool table"
+    },
+    {
+      "id": "ndr/cropland/agroforestry/semi-arid-tropical/raji2020",
+      "cover": {"form": "cropland", "label_source": "Agroforestry", "condition": "trees intercropped", "management": "fertilised, with woody component"},
+      "values": {"load_n": 89, "load_p": 2.48, "eff_n": 0.6, "eff_p": 0.54, "crit_len_n": 50, "crit_len_p": 15, "proportion_subsurface_n": 0.25},
+      "context": {"biome": "tropical semi-arid", "region": "Sokoto-Rima basin, NW Nigeria", "spatial_scale": "basin, InVEST NDR", "study_area": "spatiotemporal nutrient retention 1992-2015"},
+      "source_key": "raji2020", "confidence": "medium",
+      "caveats": "Same load as cropland but higher retention from the woody component - a useful template for a 'cropland + trees' restoration scenario.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Raji et al. (2020)'"
+    },
+    {
+      "id": "ndr/grassland/semi-arid-tropical/raji2020",
+      "cover": {"form": "grassland", "label_source": "Grassland", "condition": "natural / lightly grazed"},
+      "values": {"load_n": 8, "load_p": 0.93, "eff_n": 0.75, "eff_p": 0.6, "crit_len_n": 150, "crit_len_p": 30, "proportion_subsurface_n": 0.47},
+      "context": {"biome": "tropical semi-arid", "region": "Sokoto-Rima basin, NW Nigeria", "spatial_scale": "basin, InVEST NDR", "study_area": "spatiotemporal nutrient retention 1992-2015"},
+      "source_key": "raji2020", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Raji et al. (2020)'"
+    },
+    {
+      "id": "ndr/shrubland/semi-arid-tropical/raji2020",
+      "cover": {"form": "shrubland", "label_source": "Shrubland", "condition": "natural"},
+      "values": {"load_n": 8, "load_p": 0.93, "eff_n": 0.75, "eff_p": 0.6, "crit_len_n": 150, "crit_len_p": 25, "proportion_subsurface_n": 0.47},
+      "context": {"biome": "tropical semi-arid", "region": "Sokoto-Rima basin, NW Nigeria", "spatial_scale": "basin, InVEST NDR", "study_area": "spatiotemporal nutrient retention 1992-2015"},
+      "source_key": "raji2020", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Raji et al. (2020)'"
+    },
+    {
+      "id": "ndr/forest/woodland/semi-arid-tropical/raji2020",
+      "cover": {"form": "forest", "label_source": "Woodland", "canopy_density": "closed", "condition": "natural"},
+      "values": {"load_n": 2.8, "load_p": 1.4, "eff_n": 0.8, "eff_p": 0.67, "crit_len_n": 300, "crit_len_p": 20, "proportion_subsurface_n": 0.47},
+      "context": {"biome": "tropical semi-arid", "region": "Sokoto-Rima basin, NW Nigeria", "spatial_scale": "basin, InVEST NDR", "study_area": "spatiotemporal nutrient retention 1992-2015"},
+      "source_key": "raji2020", "confidence": "medium",
+      "caveats": "Long crit_len_n (300 m) means retention builds slowly with buffer width for N; eff_n high. This row is widely reused for native forest in temperate InVEST studies too.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Raji et al. (2020)'"
+    },
+    {
+      "id": "ndr/bare/semi-arid-tropical/raji2020",
+      "cover": {"form": "bare", "label_source": "Bare surface", "condition": "unvegetated / disturbed"},
+      "values": {"load_n": 5, "load_p": 0.79, "eff_n": 0.01, "eff_p": 0.26, "crit_len_n": 10, "crit_len_p": 15, "proportion_subsurface_n": 0.47},
+      "context": {"biome": "tropical semi-arid", "region": "Sokoto-Rima basin, NW Nigeria", "spatial_scale": "basin, InVEST NDR", "study_area": "spatiotemporal nutrient retention 1992-2015"},
+      "source_key": "raji2020", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Raji et al. (2020)'"
+    },
+    {
+      "id": "ndr/built/settlements/semi-arid-tropical/raji2020",
+      "cover": {"form": "built", "label_source": "Settlements", "condition": "impervious-dominated"},
+      "values": {"load_n": 10, "load_p": 2.1, "eff_n": 0.1, "eff_p": 0.26, "crit_len_n": 10, "crit_len_p": 15, "proportion_subsurface_n": 0.2},
+      "context": {"biome": "tropical semi-arid", "region": "Sokoto-Rima basin, NW Nigeria", "spatial_scale": "basin, InVEST NDR", "study_area": "spatiotemporal nutrient retention 1992-2015"},
+      "source_key": "raji2020", "confidence": "medium",
+      "caveats": "Low proportion_subsurface_n (0.2) - urban N moves mostly as overland flow. load_p elevated by urban sources (detergents, litter, pet waste).",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Raji et al. (2020)'"
+    },
+    {
+      "id": "ndr/water/semi-arid-tropical/raji2020",
+      "cover": {"form": "water", "label_source": "Waterbody", "condition": "open water"},
+      "values": {"load_n": 2, "load_p": 0, "eff_n": 0.05, "eff_p": 0.4, "crit_len_n": 10, "crit_len_p": 15, "proportion_subsurface_n": 0.66},
+      "context": {"biome": "tropical semi-arid", "region": "Sokoto-Rima basin, NW Nigeria", "spatial_scale": "basin, InVEST NDR", "study_area": "spatiotemporal nutrient retention 1992-2015"},
+      "source_key": "raji2020", "confidence": "low",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Raji et al. (2020)'"
+    },
+    {
+      "id": "ndr/grassland/improved-pasture/temperate/redhead2018",
+      "cover": {"form": "grassland", "label_source": "Improved Grassland", "condition": "productive sward", "management": "fertilised, grazed / cut"},
+      "values": {"load_n": 10.42, "load_p": 0.63, "eff_n": 0.1, "eff_p": 0.25},
+      "context": {"biome": "temperate maritime", "region": "Great Britain (national)", "spatial_scale": "national, InVEST nutrient retention, calibrated to river data", "study_area": "national-scale evaluation of InVEST nutrient retention, UK", "legend": "LCM2007 Broad Habitat"},
+      "source_key": "redhead2018", "confidence": "high",
+      "caveats": "'Retention' in Redhead et al. = InVEST eff. Low eff_n (0.1) for improved grassland - it is a source, not a sink. No crit_len / proportion_subsurface in the reproduced table; take those from Raji et al. (2020) or the InVEST User Guide.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', table 'Redhead et al. (2018)'"
+    },
+    {
+      "id": "ndr/cropland/arable-horticulture/temperate/redhead2018",
+      "cover": {"form": "cropland", "label_source": "Arable and Horticulture", "condition": "conventionally managed", "management": "fertilised annual + horticultural"},
+      "values": {"load_n": 35.24, "load_p": 1.52, "eff_n": 0.25, "eff_p": 0.25},
+      "context": {"biome": "temperate maritime", "region": "Great Britain (national)", "spatial_scale": "national, InVEST, calibrated", "study_area": "national-scale evaluation of InVEST nutrient retention, UK", "legend": "LCM2007 Broad Habitat"},
+      "source_key": "redhead2018", "confidence": "high",
+      "caveats": "load_n ~35 kg/ha/yr is a temperate-Europe arable figure - lower than the Raji et al. (2020) tropical cropland load of 89 and higher than a low-input dryland system. Choose by fertiliser regime.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Redhead et al. (2018)'"
+    },
+    {
+      "id": "ndr/forest/broadleaved/temperate/redhead2018",
+      "cover": {"form": "forest", "label_source": "Broadleaved Woodland", "canopy_density": "closed", "condition": "semi-natural"},
+      "values": {"load_n": 65, "load_p": 1.07, "eff_n": 0.8, "eff_p": 0.8},
+      "context": {"biome": "temperate maritime", "region": "Great Britain (national)", "spatial_scale": "national, InVEST, calibrated", "study_area": "national-scale evaluation of InVEST nutrient retention, UK", "legend": "LCM2007 Broad Habitat"},
+      "source_key": "redhead2018", "confidence": "medium",
+      "caveats": "The high load_n (65) is atmospheric-deposition + canopy throughfall in an N-polluted region, largely re-retained (eff 0.8). In a low-deposition region use a much smaller forest load (Raji et al. use 2.8).",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Redhead et al. (2018)'"
+    },
+    {
+      "id": "ndr/forest/coniferous/temperate/redhead2018",
+      "cover": {"form": "forest", "label_source": "Coniferous Woodland", "canopy_density": "closed", "condition": "plantation / semi-natural"},
+      "values": {"load_n": 10.9, "load_p": 0.73, "eff_n": 0.8, "eff_p": 0.8},
+      "context": {"biome": "temperate maritime", "region": "Great Britain (national)", "spatial_scale": "national, InVEST, calibrated", "study_area": "national-scale evaluation of InVEST nutrient retention, UK", "legend": "LCM2007 Broad Habitat"},
+      "source_key": "redhead2018", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Redhead et al. (2018)'"
+    },
+    {
+      "id": "ndr/grassland/semi-natural/temperate/redhead2018",
+      "cover": {"form": "grassland", "label_source": "Acid / Neutral / Calcareous / Heather grassland", "condition": "semi-natural, unimproved", "management": "extensive or none"},
+      "values": {"load_n": 7.5, "load_p": 0.15, "eff_n": 0.4, "eff_p": 0.4},
+      "context": {"biome": "temperate maritime", "region": "Great Britain (national)", "spatial_scale": "national, InVEST, calibrated", "study_area": "national-scale evaluation of InVEST nutrient retention, UK", "legend": "LCM2007 Broad Habitat"},
+      "source_key": "redhead2018", "confidence": "high",
+      "caveats": "Rough grassland is higher (load_n 17.33, eff 0.25); montane 9 / 0.5.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Redhead et al. (2018)'"
+    },
+    {
+      "id": "ndr/wetland/bog-fen/temperate/redhead2018",
+      "cover": {"form": "wetland", "label_source": "Bog / Fen, Marsh and Swamp", "condition": "peat-forming, waterlogged"},
+      "values": {"load_n": 10, "load_p": 0.15, "eff_n": 0.8, "eff_p": 0.8},
+      "context": {"biome": "temperate maritime", "region": "Great Britain (national)", "spatial_scale": "national, InVEST, calibrated", "study_area": "national-scale evaluation of InVEST nutrient retention, UK", "legend": "LCM2007 Broad Habitat"},
+      "source_key": "redhead2018", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Redhead et al. (2018)'"
+    },
+    {
+      "id": "ndr/built/urban-suburban/temperate/redhead2018",
+      "cover": {"form": "built", "label_source": "Urban / Suburban", "condition": "impervious to mixed"},
+      "values": {"load_n": 7.4, "load_p": 2.22, "eff_n": 0.05, "eff_p": 0.05},
+      "context": {"biome": "temperate maritime", "region": "Great Britain (national)", "spatial_scale": "national, InVEST, calibrated", "study_area": "national-scale evaluation of InVEST nutrient retention, UK", "legend": "LCM2007 Broad Habitat"},
+      "source_key": "redhead2018", "confidence": "high",
+      "caveats": "Suburban load_n 7.63, urban 7.24; both load_p 2.22. Near-zero eff - built land does not retain.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Redhead et al. (2018)'"
+    },
+    {
+      "id": "ndr/water-rock/temperate/redhead2018",
+      "cover": {"form": "water / bare rock", "label_source": "Freshwater / Inland Rock", "condition": "open water or bare rock"},
+      "values": {"load_n": 0.01, "load_p": 0.01, "eff_n": 0.0, "eff_p": 0.05},
+      "context": {"biome": "temperate maritime", "region": "Great Britain (national)", "spatial_scale": "national, InVEST, calibrated", "study_area": "national-scale evaluation of InVEST nutrient retention, UK", "legend": "LCM2007 Broad Habitat"},
+      "source_key": "redhead2018", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Redhead et al. (2018)'"
+    },
+    {
+      "id": "ndr/load/fertiliser-rates/australia/ludemann2022",
+      "cover": {"form": "cropland", "label_source": "crop-specific fertiliser application rate (Australia, 2018)"},
+      "values": {},
+      "by_source": {
+        "_units": "kg nutrient / ha applied; P = P2O5 x 0.4364; not an export load - multiply by a runoff/leaching export fraction",
+        "wheat": {"N": 39.1, "P2O5": 24.8},
+        "rice": {"N": 98.2, "P2O5": 26.3},
+        "maize_grain": {"N": 255.5, "P2O5": 95.8},
+        "other_cereals": {"N": 34.1, "P2O5": 26.3},
+        "other_oil_crops_incl_rapeseed": {"N": 39.5, "P2O5": 19.8},
+        "cotton": {"N": 182.9, "P2O5": 57.9},
+        "sugar_cane": {"N": 142.6, "P2O5": 53.1},
+        "fruits": {"N": 116.8, "P2O5": 85.5},
+        "grassland": {"N": 0.25, "P2O5": 0.98}
+      },
+      "context": {"biome": "n/a", "region": "Australia (national, per crop)", "spatial_scale": "national statistics", "study_area": "global fertiliser use by crop and country (IFA, 2014 rates on 2018 FAO area)"},
+      "source_key": "ludemann2022", "confidence": "high",
+      "caveats": "Application rate, not export. FS28 used it to sanity-check the adopted Australian dryland-cropping load. Typical export fractions: a few % of applied N as surface/leached N; ~1-5% of applied P.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', table 'Global data on fertilizer use by crop and by country' (AUSTRALIA)"
+    },
+    {
+      "id": "ndr/bmp/percent-reduction/methodological/mixed",
+      "cover": {"form": "cropland / grassland under BMP", "label_source": "conservation-management scenario (no land-use change)"},
+      "values": {},
+      "by_source": {
+        "crop_area_bmp_load_n_reduction": "25% (no-till + cover crops; robust range 25-55%)",
+        "crop_area_bmp_load_p_reduction": "30% (particulate P falls more than dissolved; range 30-55%)",
+        "livestock_area_bmp_load_n_reduction": "20% (rotational grazing; effect inconsistent, depends on stocking rate)",
+        "livestock_area_bmp_load_p_reduction": "50% (FS28 choice; conservative continuous->rotational evidence is 20-30%, higher values involve land-use conversion)"
+      },
+      "context": {"biome": "temperate cropping / grazing", "region": "synthesis (global meta-analyses; Colombia, USA, Australia field studies)", "spatial_scale": "field to watershed", "study_area": "FS28 BMP parameterisation from Zhang et al. 2020, Daryanto et al. 2017, Uribe et al. 2018, Speir et al. 2022, Kaur et al. 2024, Young et al. 2023, Subedi et al. 2020 and others"},
+      "source_key": "redhead2018", "confidence": "low",
+      "caveats": "Apply as a multiplier on load_n / load_p for the BMP land-cover class; keep eff and crit_len unchanged (management, not structure, changes). The source_key here is nominal - the numbers are a synthesis; see the sheet's 'Percentage reduction' narrative and its ~20 citations for the primary evidence.",
+      "provenance": "FS28 masterfile, sheet 'NDR params', 'Methodological decisions' + 'Percentage reduction'"
+    }
+  ]
+}

@@ -1,0 +1,155 @@
+{
+  "$schema_version": "1.0",
+  "parameter": "curve_number",
+  "aka": ["SCS curve number", "CN", "runoff curve number"],
+  "models": ["swy"],
+  "invest_arg": "biophysical_table_path",
+  "invest_column": ["CN_A", "CN_B", "CN_C", "CN_D"],
+  "units": "dimensionless (0-100), one value per hydrologic soil group A/B/C/D",
+  "definition": "SCS/NRCS runoff curve number: higher CN = more of a rain event becomes quick runoff, less infiltrates. Depends jointly on land cover/condition and hydrologic soil group (A = sandy, high infiltration; D = clayey, low infiltration). InVEST Seasonal Water Yield uses CN for the quickflow (event runoff) term.",
+  "typical_range": [25, 98],
+  "how_to_estimate": {
+    "summary": "Cross your land-cover class (and its hydrologic condition) with the four hydrologic soil groups using an SCS CN table. Use a global tabulation (Asante et al. 2008 / GeoSFM, or Jaafar et al. 2019 / GCN250) where no national table exists. InVEST expects average antecedent runoff condition (ARC II).",
+    "methods": [
+      {"name": "global operational CN table", "source_key": "asante2008", "notes": "CN by A-D for a coarse global land-cover legend; used in USGS FEWS NET continental hydrology."},
+      {"name": "GCN250 class table (ARC II)", "source_key": "jaafar2019", "notes": "CN by A-D per ESA CCI land-cover class at 250 m; also gives dry (ARC I) and wet (ARC III) surfaces."},
+      {"name": "national NRCS/TR-55 table", "source_key": null, "notes": "Preferred where it exists (e.g. USDA TR-55, national hydrology manuals)."}
+    ]
+  },
+  "how_to_choose": "Pick the CN source whose land-cover class most closely matches yours in BOTH structure and hydrologic condition (poor/fair/good cover). FS28 chose per class: built/urban, cropland, irrigated land, shrubland, barren, mixed forest, evergreen broadleaf forest, herbaceous wetland and water from Asante et al. (2008); disturbed/fallow, dense hardwood and conifer plantations, and good-condition natural grassland from GCN250 (Jaafar et al. 2019). Keep CN_A < CN_B < CN_C < CN_D. Water = 98 in all groups. For infiltration-improving BMPs (cover crops, no-till, rotational grazing), lower CN by an absolute amount rather than changing the class.",
+  "records": [
+    {
+      "id": "cn/built/impervious/global/asante2008",
+      "cover": {"form": "built", "label_source": "Urban and built-up land", "condition": "highly impervious (commercial/industrial)", "equivalent_class": "GeoSFM 'Urban and Built-Up Land'"},
+      "values": {"CN_A": 81, "CN_B": 88, "CN_C": 91, "CN_D": 93},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "high",
+      "caveats": "For medium/low-density residential with gardens, a lower CN (open-space or 1/8-acre-lot rows in TR-55) is more appropriate.",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + per-class narrative"
+    },
+    {
+      "id": "cn/bare/disturbed-fallow/global/jaafar2019",
+      "cover": {"form": "bare", "label_source": "Disturbed ground / bare soil", "condition": "exposed, compacted (mining, earthworks)", "equivalent_class": "GCN250 'Fallow / bare soil'"},
+      "values": {"CN_A": 77, "CN_B": 86, "CN_C": 91, "CN_D": 94},
+      "context": {"region": "global, 250 m", "spatial_scale": "250 m", "arc": "II (average)", "study_area": "GCN250 global curve numbers"},
+      "source_key": "jaafar2019", "confidence": "high",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/bare/natural-low-cover/global/asante2008",
+      "cover": {"form": "bare", "label_source": "Natural low cover (foredunes, claypans, rock outcrop, saline flats)", "condition": "inherently sparse vegetation", "equivalent_class": "GeoSFM 'Barren or Sparsely Vegetated'"},
+      "values": {"CN_A": 68, "CN_B": 79, "CN_C": 86, "CN_D": 89},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "medium",
+      "caveats": "Lower than 'disturbed ground' - undisturbed natural surfaces crust less and can have biocrust / gravel lag.",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/cropland/rainfed/global/asante2008",
+      "cover": {"form": "cropland", "label_source": "Dryland cropping", "condition": "row crops, straight row, fair-to-good", "equivalent_class": "GeoSFM 'Dryland Cropland and Pasture'"},
+      "values": {"CN_A": 68, "CN_B": 79, "CN_C": 86, "CN_D": 89},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "high",
+      "caveats": "TR-55 straight-row row crops span CN_B 78 (good) to 81 (poor); this row sits mid-range.",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/cropland/irrigated/global/asante2008",
+      "cover": {"form": "cropland", "label_source": "Horticulture / irrigated pasture and crops", "condition": "supplementary irrigation raises antecedent moisture", "equivalent_class": "GeoSFM 'Irrigated Cropland and Pasture'"},
+      "values": {"CN_A": 62, "CN_B": 71, "CN_C": 78, "CN_D": 81},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "medium",
+      "caveats": "Lower CN than dryland cropping in this table because the class is dominated by dense irrigated pasture/orchard cover, despite wetter antecedent conditions.",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/grassland/improved-pasture/global/asante2008",
+      "cover": {"form": "grassland", "label_source": "Exotic / improved pasture, grassland", "condition": "fair cover, grazed", "equivalent_class": "GeoSFM 'Grassland'"},
+      "values": {"CN_A": 54, "CN_B": 70, "CN_C": 80, "CN_D": 85},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "high",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/grassland/natural-good-condition/global/jaafar2019",
+      "cover": {"form": "grassland", "label_source": "Native pasture / grassland; scattered native trees (grassy understorey)", "condition": "good cover, lightly grazed", "equivalent_class": "GCN250 'Natural grassland / grassland good condition'"},
+      "values": {"CN_A": 39, "CN_B": 61, "CN_C": 74, "CN_D": 80},
+      "context": {"region": "global, 250 m", "spatial_scale": "250 m", "arc": "II (average)", "study_area": "GCN250 global curve numbers"},
+      "source_key": "jaafar2019", "confidence": "high",
+      "caveats": "FS28 used this for good-condition native grassland and for scattered-tree woodland where the grassy understorey controls infiltration (not the sparse canopy). Matches TR-55 pasture 'good' (CN_B 61).",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/shrubland/dense/global/asante2008",
+      "cover": {"form": "shrubland", "label_source": "Native scrubland", "condition": "dense shrub cover, limited tree canopy", "equivalent_class": "GeoSFM 'Shrubland'"},
+      "values": {"CN_A": 45, "CN_B": 66, "CN_C": 77, "CN_D": 83},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/forest/native-broadleaf/global/asante2008",
+      "cover": {"form": "forest", "label_source": "Treed native vegetation (continuous eucalypt forest)", "canopy_density": "closed", "condition": "good, deep litter", "equivalent_class": "GeoSFM 'Evergreen Broadleaf Forest'"},
+      "values": {"CN_A": 25, "CN_B": 55, "CN_C": 70, "CN_D": 77},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "high",
+      "caveats": "Lowest CN in the set - closed native forest with intact litter. TR-55 'woods, good condition' is CN_B 55.",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/forest/mixed-open/global/asante2008",
+      "cover": {"form": "forest", "label_source": "Other exotic tree cover (shelterbelts, riparian willows, ornamentals)", "canopy_density": "heterogeneous / open", "equivalent_class": "GeoSFM 'Mixed Forest'"},
+      "values": {"CN_A": 35, "CN_B": 60.5, "CN_C": 73.5, "CN_D": 80},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/forest/hardwood-plantation/global/jaafar2019",
+      "cover": {"form": "forest", "label_source": "Hardwood plantation (Eucalyptus globulus)", "canopy_density": "dense broadleaf evergreen", "condition": "good", "equivalent_class": "GCN250 'Tree Broadleaf Evergreen, woods good condition'"},
+      "values": {"CN_A": 30, "CN_B": 55, "CN_C": 70, "CN_D": 77},
+      "context": {"region": "global, 250 m", "spatial_scale": "250 m", "arc": "II (average)", "study_area": "GCN250 global curve numbers"},
+      "source_key": "jaafar2019", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/forest/conifer-plantation/global/jaafar2019",
+      "cover": {"form": "forest", "label_source": "Conifer plantation (Pinus radiata)", "canopy_density": "dense needleleaf evergreen", "condition": "fair-good", "equivalent_class": "GCN250 'Tree Needleleaf Evergreen, woods'"},
+      "values": {"CN_A": 33, "CN_B": 58, "CN_C": 72, "CN_D": 78},
+      "context": {"region": "global, 250 m", "spatial_scale": "250 m", "arc": "II (average)", "study_area": "GCN250 global curve numbers"},
+      "source_key": "jaafar2019", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/wetland/herbaceous/global/asante2008",
+      "cover": {"form": "wetland", "label_source": "Wetland - seasonal / perennial", "condition": "herbaceous, seasonally to permanently inundated", "equivalent_class": "GeoSFM 'Herbaceous Wetland'"},
+      "values": {"CN_A": 30, "CN_B": 58, "CN_C": 71, "CN_D": 78},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "low",
+      "caveats": "FS28 used the same values for seasonal and perennial wetland. Where a wetland is effectively always saturated, some workflows raise CN toward runoff-dominated behaviour instead.",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/water/open/global/asante2008",
+      "cover": {"form": "water", "label_source": "Water", "condition": "permanent open water", "equivalent_class": "GeoSFM 'Water Bodies'"},
+      "values": {"CN_A": 98, "CN_B": 98, "CN_C": 98, "CN_D": 98},
+      "context": {"region": "global (operational)", "spatial_scale": "continental hydrology", "arc": "II (average)", "study_area": "GeoSFM technical manual"},
+      "source_key": "asante2008", "confidence": "high",
+      "caveats": "Standard SCS practice - open water is treated as 100% runoff.",
+      "provenance": "FS28 masterfile, sheet 'CN', Curve Number table + narrative"
+    },
+    {
+      "id": "cn/bmp/absolute-reduction/methodological/mixed",
+      "cover": {"form": "cropland / grassland under infiltration BMP", "label_source": "conservation-management scenario (no land-use change)"},
+      "values": {},
+      "by_source": {
+        "crop_area_bmp": "lower CN by 25 units (absolute), representing ~+35% infiltration from cover crops / perennials",
+        "livestock_area_bmp": "lower CN by 18 units (absolute), representing ~+30% infiltration from multi-paddock / rotational grazing"
+      },
+      "context": {"region": "synthesis", "spatial_scale": "field", "arc": "II (average)", "study_area": "FS28 BMP parameterisation; CN->infiltration curves computed per CN and rainfall depth then back-solved"},
+      "source_key": "ray2010", "confidence": "low",
+      "caveats": "Applied to the BMP class's CN_A..D. The source_key is nominal (CN method context); the reduction magnitudes are FS28 methodological choices backed by infiltration-increase literature (cover crops +34.8%, perennials +59.2%, multi-paddock grazing +29%). Verify for your soils.",
+      "provenance": "FS28 masterfile, sheet 'CN', 'Methodological decisions'"
+    }
+  ]
+}

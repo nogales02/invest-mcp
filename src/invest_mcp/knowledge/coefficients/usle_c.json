@@ -1,0 +1,312 @@
+{
+  "$schema_version": "1.0",
+  "parameter": "usle_c",
+  "aka": ["cover-management factor", "C factor", "C-factor"],
+  "models": ["sdr"],
+  "invest_arg": "biophysical_table_path",
+  "invest_column": "usle_c",
+  "units": "dimensionless (0-1)",
+  "definition": "Ratio of soil loss from land under a given cover and management to the loss from continuous bare fallow, under identical slope and rainfall. Near 0 for undisturbed forest / dense litter; near 1 for bare, tilled or fallow soil.",
+  "typical_range": [0.0001, 1.0],
+  "how_to_estimate": {
+    "summary": "Three common routes, in rough order of rigour: (1) a local field- or plot-based C study for your crops and management; (2) a per-land-cover literature lookup (the records below); (3) a continuous estimate from remote sensing - C as a function of fractional vegetation cover or NDVI.",
+    "methods": [
+      {"name": "literature lookup by land cover", "when": "no local data; broad land-cover map", "notes": "Match vegetation form + canopy density + condition + management. Prefer a source in your biome/region."},
+      {"name": "fractional-cover / LAI ratio", "source_key": "yang2014", "notes": "C declines exponentially with green + non-green ground cover; gives a continuous C raster. Needs a fractional-cover product."},
+      {"name": "NDVI regression", "source_key": "benavidez2018", "notes": "C = exp(-alpha * NDVI / (beta - NDVI)) type forms; calibrate alpha/beta regionally - transferring them blindly is a known error source."},
+      {"name": "crop-rotation weighting", "source_key": "panagos2015c", "notes": "For arable land, weight crop-specific C by the cropping calendar and modify for tillage, residue and cover crops."}
+    ]
+  },
+  "how_to_choose": "USLE and RUSLE C are defined slightly differently (RUSLE uses subfactors: prior land use, canopy, surface cover, surface roughness, soil moisture) but values are used interchangeably in practice - note which model your SDR run represents. For a mixed natural class pick by canopy density and litter/ground cover. For cropland, the single biggest control is tillage and residue retention, not the crop: conventional till 0.2-0.5, reduced till 0.15-0.25, no-till + residue 0.05-0.15, no-till + cover crop 0.01-0.08. Record the source_key next to every value you use.",
+  "records": [
+    {
+      "id": "usle_c/forest/closed-canopy/global/yang2003",
+      "cover": {"form": "forest", "label_source": "Dense forest", "canopy_density": "closed (>70%)", "condition": "undisturbed", "management": "none", "crosswalk": {"esa_worldcover": [10], "note": "advisory"}},
+      "value": 0.001, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "derivation": "assigned per land-cover class", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "medium",
+      "caveats": "Global class-mean; very low value assumes full canopy + intact litter. Young or thinned stands are much higher.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', table 'Yang et al. (2003) - Global potential soil erosion'"
+    },
+    {
+      "id": "usle_c/forest/open-canopy/global/yang2003",
+      "cover": {"form": "forest", "label_source": "Sparse forest", "canopy_density": "open (40-70%)", "condition": "undisturbed to lightly disturbed", "management": "none"},
+      "value": 0.01, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "derivation": "per land-cover class", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "medium",
+      "caveats": "Use for woodland / scattered trees with grassy understorey.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/cropland/generic/global/yang2003",
+      "cover": {"form": "cropland", "label_source": "Cropland", "condition": "conventionally managed", "management": "annual tillage"},
+      "value": 0.5, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "medium",
+      "caveats": "High global default for tilled annual cropland with little residue. Regional cropland C is usually lower (0.07-0.35) once residue and rotation are accounted for.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/cropland/paddy/global/yang2003",
+      "cover": {"form": "cropland", "label_source": "Paddy field", "condition": "flooded rice", "management": "puddled, bunded"},
+      "value": 0.1, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "medium",
+      "caveats": "Standing water + bunds suppress detachment; not applicable to upland rice.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/grassland/dense/global/yang2003",
+      "cover": {"form": "grassland", "label_source": "Dense grassland", "canopy_density": "closed", "condition": "good cover", "management": "ungrazed to lightly grazed"},
+      "value": 0.08, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "medium",
+      "caveats": "For heavily grazed / degraded grassland use the sparse-grassland value.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/grassland/sparse/global/yang2003",
+      "cover": {"form": "grassland", "label_source": "Sparse grassland", "canopy_density": "sparse (<40%)", "condition": "degraded / overgrazed"},
+      "value": 0.2, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/bare/global/yang2003",
+      "cover": {"form": "bare", "label_source": "Bare land / bare areas", "condition": "persistently unvegetated", "management": "none"},
+      "value": 0.35, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "medium",
+      "caveats": "Naturally low-cover surfaces (rock outcrop, claypan, dune) - not tilled fallow, which approaches C=1. Disturbed/mining ground is often assigned this value too.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/wetland/global/yang2003",
+      "cover": {"form": "wetland", "label_source": "Wetland", "condition": "herbaceous, seasonally to permanently wet"},
+      "value": 0.05, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "low",
+      "caveats": "SDR rarely routes meaningful hillslope erosion through wetlands; value matters little.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/water/global/yang2003",
+      "cover": {"form": "water", "label_source": "Water body", "condition": "permanent open water"},
+      "value": 0.01, "range": [0.0, 0.01],
+      "context": {"biome": "not differentiated", "region": "global", "erosion_model": "USLE", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "low",
+      "caveats": "Often set to 0. Non-zero avoids divide-by-zero in some workflows.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/snow-ice/global/yang2003",
+      "cover": {"form": "permanent snow / ice", "label_source": "Permanent ice and snow"},
+      "value": 0.001, "range": null,
+      "context": {"biome": "not differentiated", "region": "global", "erosion_model": "USLE", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "low",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Yang et al. (2003)'"
+    },
+    {
+      "id": "usle_c/shrubland/dense/regional-europe/bakker2008",
+      "cover": {"form": "shrubland", "label_source": "Dense shrub", "canopy_density": "closed", "condition": "undisturbed"},
+      "value": 0.01, "range": null,
+      "context": {"biome": "Mediterranean / temperate", "region": "Europe (Amendoeira PT, Lagadas GR study areas)", "spatial_scale": "plot / field observation", "erosion_model": "RUSLE (WaTEM/SEDEM)", "study_area": "four European land-use-change areas"},
+      "source_key": "bakker2008", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', table 'Bakker et al. (2008)'"
+    },
+    {
+      "id": "usle_c/shrubland/sparse/regional-europe/bakker2008",
+      "cover": {"form": "shrubland", "label_source": "Sparse shrub", "canopy_density": "sparse (<40%)"},
+      "value": 0.1, "range": null,
+      "context": {"biome": "Mediterranean / temperate", "region": "Europe", "spatial_scale": "plot / field observation", "erosion_model": "RUSLE (WaTEM/SEDEM)", "study_area": "four European land-use-change areas"},
+      "source_key": "bakker2008", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Bakker et al. (2008)'"
+    },
+    {
+      "id": "usle_c/forest/closed/regional-europe/bakker2008",
+      "cover": {"form": "forest", "label_source": "Forest", "canopy_density": "closed", "condition": "undisturbed"},
+      "value": 0.001, "range": [0.001, 0.01],
+      "context": {"biome": "temperate / Mediterranean", "region": "Europe (Hageland BE, Lagadas GR, Amendoeira PT)", "spatial_scale": "plot / literature", "erosion_model": "RUSLE", "study_area": "four European land-use-change areas"},
+      "source_key": "bakker2008", "confidence": "medium",
+      "caveats": "0.001 for closed forest; open forest ~0.01; young oak plantation ~0.01.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Bakker et al. (2008)'"
+    },
+    {
+      "id": "usle_c/grassland/managed/regional-europe/bakker2008",
+      "cover": {"form": "grassland", "label_source": "Managed grassland", "condition": "good cover", "management": "managed, not extensively grazed"},
+      "value": 0.01, "range": null,
+      "context": {"biome": "temperate", "region": "Europe (Lautaret FR, Hageland BE)", "spatial_scale": "plot / literature", "erosion_model": "RUSLE", "study_area": "four European land-use-change areas"},
+      "source_key": "bakker2008", "confidence": "medium",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Bakker et al. (2008)'"
+    },
+    {
+      "id": "usle_c/grassland/extensive-grazing/regional-europe/bakker2008",
+      "cover": {"form": "grassland", "label_source": "Grassland for extensive grazing / unmanaged", "condition": "moderate cover", "management": "extensive grazing"},
+      "value": 0.05, "range": [0.05, 0.2],
+      "context": {"biome": "temperate / Mediterranean", "region": "Europe (Lautaret FR, Lagadas GR)", "spatial_scale": "field observation", "erosion_model": "RUSLE", "study_area": "four European land-use-change areas"},
+      "source_key": "bakker2008", "confidence": "medium",
+      "caveats": "0.05 unmanaged grassland, up to 0.2 for grassland under heavy extensive grazing.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Bakker et al. (2008)'"
+    },
+    {
+      "id": "usle_c/cropland/arable-average/regional-europe/bakker2008",
+      "cover": {"form": "cropland", "label_source": "Arable land (rotation average)", "condition": "conventionally managed", "management": "mixed annual rotation"},
+      "value": 0.3, "range": [0.02, 1.0],
+      "context": {"biome": "temperate", "region": "Europe", "spatial_scale": "plot / literature", "erosion_model": "RUSLE", "study_area": "four European land-use-change areas"},
+      "source_key": "bakker2008", "confidence": "medium",
+      "caveats": "Per-crop within this source: alfalfa established 0.02, grapes 0.05, alfalfa/clover cover crop 0.08, grass/legume cover crop 0.16, rye/winter wheat 0.2, barley/oats 0.21, grain corn 0.31, peas/beans 0.32, potatoes 0.34, root crops 0.36, vegetable crops 0.43, tobacco 0.49, fallow 1.0.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Bakker et al. (2008)'"
+    },
+    {
+      "id": "usle_c/cropland/orchard-vineyard/regional-europe/bakker2008",
+      "cover": {"form": "cropland", "label_source": "Orchard / olives / vineyard", "canopy_density": "open tree/vine crop", "condition": "bare or cover-cropped inter-row"},
+      "value": 0.05, "range": [0.05, 0.2],
+      "context": {"biome": "Mediterranean", "region": "Europe (Hageland BE, Amendoeira PT)", "spatial_scale": "field observation", "erosion_model": "RUSLE", "study_area": "four European land-use-change areas"},
+      "source_key": "bakker2008", "confidence": "medium",
+      "caveats": "0.05 with ground cover between rows; ~0.2 where inter-row is kept bare (vineyards, olives on slopes).",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Bakker et al. (2008)'"
+    },
+    {
+      "id": "usle_c/built/regional-europe/bakker2008",
+      "cover": {"form": "built", "label_source": "Built-up area / roads / rock outcrops", "condition": "sealed or armoured"},
+      "value": 0.0, "range": null,
+      "context": {"biome": "n/a", "region": "Europe", "erosion_model": "RUSLE", "study_area": "four European land-use-change areas"},
+      "source_key": "bakker2008", "confidence": "high",
+      "caveats": "Sealed surfaces produce no sheet erosion; SDR treats them as non-eroding. Construction sites (disturbed) are the opposite - near C=1.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Bakker et al. (2008)'"
+    },
+    {
+      "id": "usle_c/bare/national/teng2016",
+      "cover": {"form": "bare", "label_source": "Bare / disturbed ground", "condition": "unvegetated"},
+      "value": 0.35, "range": null,
+      "context": {"biome": "arid to temperate", "region": "Australia (national)", "spatial_scale": "~1 km (30 arc-sec)", "erosion_model": "RUSLE", "derivation": "C from national Dynamic Land Cover Dataset (MODIS)", "study_area": "continental soil-loss map of Australia"},
+      "source_key": "teng2016", "confidence": "high",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', crosswalk table (right block) + sheet 'DataBase'"
+    },
+    {
+      "id": "usle_c/grassland/native-pasture/national/teng2016",
+      "cover": {"form": "grassland", "label_source": "Grassland / native pasture", "condition": "moderate to good cover", "management": "grazed rangeland"},
+      "value": 0.06, "range": null,
+      "context": {"biome": "temperate to semi-arid", "region": "Australia (national)", "spatial_scale": "~1 km", "erosion_model": "RUSLE", "derivation": "C from Australian DLCD (MODIS)", "study_area": "continental soil-loss map of Australia"},
+      "source_key": "teng2016", "confidence": "high",
+      "caveats": "FS28 also cites 0.06 grassland / 0.08 pasture to 'Yang (2014)' in a separate table - same numbers, contested attribution; see sources.json yang2014.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', crosswalk table"
+    },
+    {
+      "id": "usle_c/grassland/exotic-pasture/national/teng2016",
+      "cover": {"form": "grassland", "label_source": "Exotic pasture / improved pasture", "condition": "good cover", "management": "grazed, improved"},
+      "value": 0.08, "range": null,
+      "context": {"biome": "temperate", "region": "Australia (national)", "spatial_scale": "~1 km", "erosion_model": "RUSLE", "study_area": "continental soil-loss map of Australia"},
+      "source_key": "teng2016", "confidence": "high",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', crosswalk table"
+    },
+    {
+      "id": "usle_c/forest/native-treed/national/teng2016",
+      "cover": {"form": "forest", "label_source": "Treed native vegetation / dense trees", "canopy_density": "closed", "condition": "undisturbed native forest"},
+      "value": 0.01, "range": null,
+      "context": {"biome": "temperate (SE Australia eucalypt)", "region": "Australia (national)", "spatial_scale": "~1 km", "erosion_model": "RUSLE", "study_area": "continental soil-loss map of Australia"},
+      "source_key": "teng2016", "confidence": "high",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', crosswalk table"
+    },
+    {
+      "id": "usle_c/shrubland/native/national/teng2016",
+      "cover": {"form": "shrubland", "label_source": "Native scrubland", "canopy_density": "dense shrub", "condition": "undisturbed"},
+      "value": 0.01, "range": null,
+      "context": {"biome": "temperate to semi-arid", "region": "Australia (national)", "spatial_scale": "~1 km", "erosion_model": "RUSLE", "study_area": "continental soil-loss map of Australia"},
+      "source_key": "teng2016", "confidence": "high",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', crosswalk table"
+    },
+    {
+      "id": "usle_c/cropland/rainfed/national/yang2003-au",
+      "cover": {"form": "cropland", "label_source": "Dryland / rainfed cropping", "condition": "conventionally managed", "management": "non-irrigated cereal / broadacre"},
+      "value": 0.07, "range": null,
+      "context": {"biome": "temperate", "region": "Australia (applied to Moorabool, Victoria)", "spatial_scale": "class default", "erosion_model": "RUSLE", "study_area": "Moorabool River basin parameterisation"},
+      "source_key": "yang2003", "confidence": "low",
+      "caveats": "Low for tilled dryland cropping - implies substantial stubble retention / minimum-till, typical of southern Australian broadacre. Verify against local management. FS28 attributes this to 'Yang et al. (2003)'.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', crosswalk table"
+    },
+    {
+      "id": "usle_c/cropland/irrigated-horticulture/national/mixed",
+      "cover": {"form": "cropland", "label_source": "Horticulture / irrigated pasture and crops", "condition": "irrigated, mixed", "management": "orchards, irrigated pasture and vegetables"},
+      "value": 0.227, "range": [0.1, 0.35],
+      "context": {"biome": "temperate", "region": "Australia (Moorabool, Victoria)", "spatial_scale": "class default (average of Teng 2016 + Bakker 2008)", "erosion_model": "RUSLE", "study_area": "Moorabool River basin parameterisation"},
+      "source_key": "teng2016", "confidence": "low",
+      "caveats": "FS28 set this as the average of a pasture-like and an arable-like value for a heterogeneous class ('Teng et al. (2016) and Bakker et al. (2008)'). Split the class if you can.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', crosswalk table"
+    },
+    {
+      "id": "usle_c/cropland/by-crop/multi/benavidez2018",
+      "cover": {"form": "cropland", "label_source": "crop-specific (see by_source)", "condition": "conventionally managed unless noted"},
+      "value": null, "range": [0.02, 0.9],
+      "by_source": {
+        "_note": "value per crop as [Panagos et al. 2015b Europe] | [David 1988 Philippines] | [Morgan 2005 various]; '-' = not reported",
+        "barley": ["0.21", "-", "0.33"],
+        "common_wheat_spelt": ["0.20", "-", "0.4-0.7"],
+        "durum_wheat": ["0.20", "-", "-"],
+        "rye": ["0.20", "-", "0.1-0.2"],
+        "grain_maize_corn": ["0.38", "0.3-0.6", "0.02-0.9"],
+        "rice": ["0.15", "0.1-0.2", "0.1-0.2"],
+        "potatoes": ["0.34", "-", "0.1-0.4"],
+        "sugar_beet": ["0.34", "-", "-"],
+        "sunflower_seed": ["0.32", "-", "-"],
+        "oilseeds": ["0.28", "-", "-"],
+        "rape_turnip_rape": ["0.30", "-", "-"],
+        "soya": ["0.28", "-", "0.2-0.5"],
+        "dried_pulses": ["0.32", "0.3-0.5", "0.04-0.7"],
+        "cotton_seed": ["0.50", "0.4-0.6", "0.4-0.7"],
+        "tobacco": ["0.49", "0.4-0.6", "-"],
+        "linseed": ["0.25", "-", "0.1-0.2"],
+        "fallow_land": ["0.50", "-", "-"],
+        "sugarcane": ["-", "-", "0.13-0.4"],
+        "bananas": ["-", "0.1-0.3", "-"],
+        "coffee": ["-", "0.1-0.4", "-"],
+        "cocoa": ["-", "0.1-0.3", "-"],
+        "pineapple": ["-", "0.2-0.5", "0.01-0.4"],
+        "groundnuts": ["-", "-", "0.3-0.8"],
+        "palm_with_cover_crops": ["-", "0.05-0.3", "0.1-0.3"],
+        "yams": ["-", "-", "0.4-0.5"]
+      },
+      "context": {"biome": "Panagos = temperate Europe; David = humid tropical Philippines; Morgan = various", "region": "multi", "spatial_scale": "crop plot / national statistics", "erosion_model": "(R)USLE", "study_area": "(R)USLE global-applicability review, Table 8"},
+      "source_key": "benavidez2018", "confidence": "medium",
+      "caveats": "Ranges span tillage systems and climates. Pick the column whose region matches your site; within a column, the low end assumes residue retention / cover, the high end bare conventional tillage.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', table 'Benavidez et al. (2018)'"
+    },
+    {
+      "id": "usle_c/by-biome/method-family/global/xiong2023",
+      "cover": {"form": "multiple (cropland, forest, grassland, shrubland, sparse vegetation)", "label_source": "per biome x C-estimation method"},
+      "value": null, "range": [0.0, 0.6],
+      "by_source": {
+        "_note": "mean C by broad cover, from the two headline global methods M1 / M2 in Xiong et al. 2023",
+        "bare_area": ["0.00", "0.58"],
+        "cropland": ["0.264", "0.302"],
+        "sparse_vegetation": ["0.00", "0.207"],
+        "grassland": ["0.224", "0.105"],
+        "shrubland": ["0.062", "0.092"],
+        "artificial_forest_plantation": ["0.193", "0.117"],
+        "natural_forest": ["0.0248", "0.0135"],
+        "wetland": ["0.00", "0.059"],
+        "urban": ["0.00", "0.221"]
+      },
+      "context": {"biome": "global, per broad cover", "region": "global", "spatial_scale": "global grid", "erosion_model": "RUSLE", "derivation": "synthesis of 946 studies; per-method-family means (their Eq. 4-33) with large SDs", "study_area": "global C-factor method comparison"},
+      "source_key": "xiong2023", "confidence": "medium",
+      "caveats": "The spread between methods (M1 vs M2) is often larger than the spread between covers - C-factor method choice dominates. Standard deviations per method family are comparable in size to the means.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', table 'Xiong et al. 2023'"
+    },
+    {
+      "id": "usle_c/cropland/tillage-systems/us/wischmeier1978",
+      "cover": {"form": "cropland", "label_source": "annual cropland by tillage system", "condition": "varies with residue"},
+      "value": null, "range": [0.01, 0.5],
+      "by_source": {
+        "conventional_tillage": "0.30-0.50",
+        "reduced_tillage_mulch_till": "0.15-0.25",
+        "no_till_residue_over_30pct": "0.05-0.15",
+        "no_till_plus_cover_crop_slopes_2_5pct": "0.01-0.08 (from Lal 2001; Kumar et al. 2022)"
+      },
+      "context": {"biome": "temperate", "region": "United States (the USLE reference), widely transferred", "spatial_scale": "plot (USLE unit plot)", "erosion_model": "USLE", "study_area": "USDA conservation-planning handbook"},
+      "source_key": "wischmeier1978", "confidence": "high",
+      "caveats": "The most defensible way to set cropland C differences for a BMP scenario: change the tillage class, not the crop. FS28 used -30% C for crop-area BMPs, -50% C for livestock-area BMPs.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Methodological decisions' (BMP narrative)"
+    }
+  ]
+}

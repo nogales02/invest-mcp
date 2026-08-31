@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 
+from invest_mcp.knowledge import coefficients as coeff_kb
 from invest_mcp.models import registry, spec_translate
 from invest_mcp.workspace import project as project_layout
 
@@ -125,6 +126,25 @@ def data_sources() -> str:
     return _DATA_SOURCES_MD
 
 
+def coefficients_index() -> str:
+    return coeff_kb.index()
+
+
+def coefficients_entry(name: str) -> str:
+    try:
+        return coeff_kb.entry(name)
+    except (coeff_kb.UnknownEntryError, FileNotFoundError):
+        known = list(coeff_kb.PARAMETERS) + list(coeff_kb.PROFILES) + ["sources", "readme"]
+        return json.dumps(
+            {
+                "error": f"unknown coefficient entry {name!r}",
+                "known": known,
+                "hint": "read invest://coefficients for the catalog",
+            },
+            indent=2,
+        )
+
+
 def register(server) -> None:
     server.resource(
         "invest://models",
@@ -150,3 +170,25 @@ def register(server) -> None:
         mime_type="text/markdown",
         description="Where to get DEM / land cover / climate / soil / hydrography inputs.",
     )(data_sources)
+    server.resource(
+        "invest://coefficients",
+        name="Cited coefficient knowledge base",
+        mime_type="application/json",
+        description=(
+            "Catalog of cited starting-point coefficients for InVEST biophysical / "
+            "lookup tables (usle_c, usle_p, NDR loads/efficiencies, curve numbers, "
+            "Kc, root_depth, carbon pools). Records are keyed by semantic cover "
+            "attributes, not one land-cover legend, and every value carries a source."
+        ),
+    )(coefficients_index)
+    server.resource(
+        "invest://coefficients/{name}",
+        name="Coefficient table / bibliography / worked profile",
+        mime_type="application/json",
+        description=(
+            "One coefficient file: a parameter (usle_c, usle_p, ndr_nutrient, "
+            "curve_number, kc, root_depth, carbon_pools), 'sources' (the "
+            "bibliography), 'readme' (how to choose a value), or a worked profile "
+            "(e.g. moorabool_fs28)."
+        ),
+    )(coefficients_entry)

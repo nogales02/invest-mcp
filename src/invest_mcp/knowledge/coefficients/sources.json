@@ -1,0 +1,274 @@
+{
+  "$schema_version": "1.0",
+  "about": "Bibliography for the coefficient knowledge base. Every 'source_key' used in a coefficient file resolves here. 'context' records what the study actually measured (biome / region / scale / model variant) so a value can be matched to a site. 'verified' says how the citation was checked while building this KB: 'web' = journal, year and DOI/URL confirmed online and the study's scope read from the abstract or a summary; 'excel' = taken as printed in the FS28 Moorabool masterfile and not re-fetched; 'standard' = a widely used canonical reference.",
+  "sources": {
+    "yang2003": {
+      "citation": "Yang, D., Kanae, S., Oki, T., Koike, T., & Musiake, K. (2003). Global potential soil erosion with reference to land use and climate changes. Hydrological Processes, 17(14), 2913-2928.",
+      "doi": "10.1002/hyp.1441",
+      "url": "https://onlinelibrary.wiley.com/doi/abs/10.1002/hyp.1441",
+      "type": "peer-reviewed",
+      "scope": "global",
+      "provides": ["usle_c", "usle_p"],
+      "context": "GIS-based USLE assessment of global potential soil erosion under historical, current and future land-use and climate. C and P assigned per land-cover class on a 0.5-degree global grid. Values are broad class-means, not climate- or region-specific.",
+      "verified": "web"
+    },
+    "yang2014": {
+      "citation": "Yang, X. (2014). Deriving RUSLE cover factor from time-series fractional vegetation cover for soil erosion risk monitoring in New South Wales. Soil Research, 52(3), 253-261.",
+      "doi": "10.1071/SR13297",
+      "url": "https://www.publish.csiro.au/SR/SR13297",
+      "type": "peer-reviewed",
+      "scope": "regional (New South Wales, Australia)",
+      "provides": ["usle_c"],
+      "context": "Derives the RUSLE C-factor continuously from MODIS time-series fractional vegetation cover for hillslope-erosion hazard mapping across New South Wales, temperate to semi-arid Australia. NOTE: this paper presents a method (C from fractional cover), not a per-land-cover lookup table.",
+      "verified": "web",
+      "disambiguation_needed": "The FS28 masterfile cites 'Yang (2014)' with no full reference, yet lists it as the source of per-class C values (e.g. irrigated cropping 0.10, rainfed cropping 0.07, pasture 0.08, grassland 0.06, dense trees 0.01). That per-class table is not in Yang X. 2014 SR13297. Treat these values as low confidence until the original table is located (possibly an Australian continental SOILOSS/RUSLE product or an internal reclassification of Teng et al. 2016)."
+    },
+    "bakker2008": {
+      "citation": "Bakker, M. M., Govers, G., van Doorn, A., Quetier, F., Chouvardas, D., & Rounsevell, M. (2008). The response of soil erosion and sediment export to land-use change in four areas of Europe: the importance of landscape pattern. Geomorphology, 98(3-4), 213-226.",
+      "doi": "10.1016/j.geomorph.2006.12.027",
+      "url": "https://www.sciencedirect.com/science/article/abs/pii/S0169555X07002292",
+      "type": "peer-reviewed",
+      "scope": "regional (four European study areas)",
+      "provides": ["usle_c"],
+      "context": "Field- and literature-based RUSLE C-factors for four contrasting European agricultural landscapes (three de-intensifying/abandoning, one intensifying), used inside WaTEM/SEDEM. C values reported by detailed land-use class (arable crops, grasslands, forests, orchards, shrublands, built-up); several are field observations at plot scale.",
+      "verified": "excel"
+    },
+    "teng2016": {
+      "citation": "Teng, H., Viscarra Rossel, R. A., Shi, Z., Behrens, T., Chappell, A., & Bui, E. (2016). Assimilating satellite imagery and visible-near infrared spectroscopy to model and map soil loss by water erosion in Australia. Environmental Modelling & Software, 77, 156-167.",
+      "doi": "10.1016/j.envsoft.2015.11.024",
+      "url": "https://www.sciencedirect.com/science/article/pii/S1364815215301134",
+      "type": "peer-reviewed",
+      "scope": "national (Australia)",
+      "provides": ["usle_c", "erosivity_R", "erodibility_K"],
+      "context": "Continental RUSLE for Australia at ~1 km (30 arc-seconds). C-factor from Australia's national Dynamic Land Cover Dataset (MODIS). R from 11 years (2002-2012) of TRMM 3B42 following Renard & Freimund (1994) / Vrieling et al.; continental mean R ~1767 MJ mm ha-1 h-1 yr-1. K from 4064 vis-NIR spectroscopy sites via Wischmeier & Smith (1978) / Rosewell (1993), mean K ~0.028-0.029 t ha h ha-1 MJ-1 mm-1, mapped by Cubist (R2 ~0.7). CSIRO collection csiro:19354.",
+      "verified": "web"
+    },
+    "benavidez2018": {
+      "citation": "Benavidez, R., Jackson, B., Maxwell, D., & Norton, K. (2018). A review of the (Revised) Universal Soil Loss Equation ((R)USLE): with a view to increasing its global applicability and improving soil loss estimates. Hydrology and Earth System Sciences, 22(11), 6059-6086.",
+      "doi": "10.5194/hess-22-6059-2018",
+      "url": "https://hess.copernicus.org/articles/22/6059/2018/",
+      "type": "peer-reviewed (review)",
+      "scope": "global compilation",
+      "provides": ["usle_c", "usle_p"],
+      "context": "Review of (R)USLE for global application. Its Table 8 compiles C-factors for general land-cover types from multiple sources; the crop-specific C values reproduced here are its comparison of Panagos et al. (2015b, Europe), David (1988, Philippines) and Morgan (2005, various). Ranges span management systems and regions - read the column, not a single number.",
+      "verified": "web"
+    },
+    "xiong2023": {
+      "citation": "Xiong, M., Leng, G., & Tang, Q. (2023). Global analysis of the cover-management factor for soil erosion modeling. Remote Sensing, 15(11), 2868.",
+      "doi": "10.3390/rs15112868",
+      "url": "https://www.mdpi.com/2072-4292/15/11/2868",
+      "type": "peer-reviewed",
+      "scope": "global",
+      "provides": ["usle_c"],
+      "context": "Compares C-factor quantification methods across 946 published articles and derives per-biome mean and SD C by method family (equations 4-33) for cropland, forest, grassland, shrubland and sparse vegetation. Use the method-family mean matching how C is being estimated elsewhere in the study; SDs are large.",
+      "verified": "web"
+    },
+    "xiong2019": {
+      "citation": "Xiong, M., Sun, R., & Chen, L. (2019). Global analysis of support practices in USLE-based soil erosion modeling. Progress in Physical Geography: Earth and Environment, 43(3), 391-409.",
+      "doi": "10.1177/0309133319832016",
+      "url": "https://doi.org/10.1177/0309133319832016",
+      "type": "peer-reviewed (meta-analysis)",
+      "scope": "global (155 studies)",
+      "provides": ["usle_p"],
+      "context": "First global meta-analysis of RUSLE P values: mean P 0.52 +/- 0.24 for contour tillage, 0.28 +/- 0.18 for terraces, 0.49 +/- 0.28 for strip cropping. P is the noisiest RUSLE factor and depends heavily on implementation quality.",
+      "verified": "excel"
+    },
+    "wischmeier1978": {
+      "citation": "Wischmeier, W. H., & Smith, D. D. (1978). Predicting Rainfall Erosion Losses: A Guide to Conservation Planning. USDA Agriculture Handbook No. 537.",
+      "url": "https://www.ars.usda.gov/ARSUserFiles/64080530/RUSLE/AH_537.pdf",
+      "type": "government handbook",
+      "scope": "United States (widely applied globally)",
+      "provides": ["usle_c", "usle_p"],
+      "context": "The originating USLE reference. P for contour farming by slope: 0.60 (1-2%), 0.50 (3-8%), up to 0.90 (21-25%); most effective on 2-10% slopes, 30-120 m slope length. C reference table: conventional tillage 0.30-0.50, mulch-till 0.15-0.25, no-till with >30% residue 0.05-0.15.",
+      "verified": "standard"
+    },
+    "renard1997": {
+      "citation": "Renard, K. G., Foster, G. R., Weesies, G. A., McCool, D. K., & Yoder, D. C. (1997). Predicting Soil Erosion by Water: A Guide to Conservation Planning with the Revised Universal Soil Loss Equation (RUSLE). USDA Agriculture Handbook No. 703.",
+      "url": "https://www.ars.usda.gov/ARSUserFiles/64080530/RUSLE/AH_703.pdf",
+      "type": "government handbook",
+      "scope": "United States (widely applied globally)",
+      "provides": ["usle_c", "usle_p"],
+      "context": "The RUSLE reference. P for strip cropping ~half the contour value for a given slope (0.25-0.35 on 3-8% slopes); terraces ~half strip-cropping (0.10-0.30) with LS additionally recomputed on inter-terrace spacing.",
+      "verified": "standard"
+    },
+    "panagos2015c": {
+      "citation": "Panagos, P., Borrelli, P., Meusburger, K., Alewell, C., Lugato, E., & Montanarella, L. (2015). Estimating the soil erosion cover-management factor at the European scale. Land Use Policy, 48, 38-50.",
+      "doi": "10.1016/j.landusepol.2015.05.021",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0264837715001611",
+      "type": "peer-reviewed",
+      "scope": "regional (Europe, EU-wide 100 m)",
+      "provides": ["usle_c"],
+      "context": "EU-wide C-factor: for arable land, crop-specific C weighted by crop statistics and modified by management (tillage, residues, cover crops); for non-arable, C ranges by land-cover blended with fractional vegetation cover. Crop C values reproduced here via Benavidez et al. (2018).",
+      "verified": "standard"
+    },
+    "david1988": {
+      "citation": "David, W. P. (1988). Soil and water conservation planning: policy issues and recommendations. Journal of Philippine Development, 15(1), 47-84.",
+      "type": "peer-reviewed",
+      "scope": "regional (Philippines, humid tropical)",
+      "provides": ["usle_c"],
+      "context": "Crop C-factor ranges for humid-tropical Philippine agriculture (bananas, cocoa, coffee, pineapple, rice, sugarcane, etc.). Reproduced here via Benavidez et al. (2018) Table 8.",
+      "verified": "excel"
+    },
+    "morgan2005": {
+      "citation": "Morgan, R. P. C. (2005). Soil Erosion and Conservation (3rd ed.). Blackwell Publishing.",
+      "type": "textbook",
+      "scope": "global (compiled)",
+      "provides": ["usle_c"],
+      "context": "Textbook compilation of C-factor ranges for many crops from varied regions. Reproduced here via Benavidez et al. (2018) Table 8; ranges are wide because they span climates and management.",
+      "verified": "standard"
+    },
+    "redhead2018": {
+      "citation": "Redhead, J. W., May, L., Oliver, T. H., Hamel, P., Sharp, R., & Bullock, J. M. (2018). National scale evaluation of the InVEST nutrient retention model in the United Kingdom. Science of the Total Environment, 610-611, 666-677.",
+      "doi": "10.1016/j.scitotenv.2017.08.092",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0048969717320909",
+      "type": "peer-reviewed",
+      "scope": "national (United Kingdom, temperate maritime)",
+      "provides": ["load_n", "load_p", "eff_n", "eff_p"],
+      "context": "Runs and evaluates InVEST NDR for all of Great Britain. N and P export loads and retention efficiencies parameterised per LCM2007 Broad Habitat (improved grassland, arable & horticulture, broadleaved woodland, coniferous woodland, acid/neutral/calcareous grassland, bog, heather, fen, freshwater, montane, suburban, urban, coastal). Calibrated against measured river nutrient concentrations. Directly appropriate for temperate systems.",
+      "verified": "web"
+    },
+    "raji2020": {
+      "citation": "Raji, S. A., Odunuga, S., & Fasona, M. (2020). Spatiotemporal modeling of nutrient retention in a tropical semi-arid basin. Environmental Research and Technology, 3(4), 225-237.",
+      "doi": "10.35208/ert.782409",
+      "url": "https://dergipark.org.tr/en/pub/ert/article/782409",
+      "type": "peer-reviewed",
+      "scope": "regional (Sokoto-Rima basin, north-west Nigeria; tropical semi-arid / Sudano-Sahelian)",
+      "provides": ["load_n", "load_p", "eff_n", "eff_p", "crit_len_n", "crit_len_p", "proportion_subsurface_n"],
+      "context": "InVEST NDR applied to the Sokoto-Rima basin 1992-2015. Full NDR parameter set by land-cover class (cropland, agroforestry, shrubland, grassland, woodland, waterbody, settlements, bare surface). The FS28 masterfile adopted this as its primary NDR reference because it is a complete, InVEST-ready set; note the semi-arid tropical context differs from temperate sites.",
+      "verified": "web"
+    },
+    "ludemann2022": {
+      "citation": "Ludemann, C. I., Gruere, A., Heffer, P., & Dobermann, A. (2022). Global data on fertilizer use by crop and by country. Scientific Data, 9(1), 501.",
+      "doi": "10.1038/s41597-022-01592-z",
+      "url": "https://datadryad.org/dataset/doi:10.5061/dryad.2rbnzs7qh",
+      "type": "peer-reviewed (data descriptor)",
+      "scope": "global, per country x crop",
+      "provides": ["load_n", "load_p"],
+      "context": "IFA estimates of mineral N, P2O5 and K2O application rates by crop and country (2014 rates on 2018 FAO harvested area). Used to inform cropland nutrient application (a proxy for load) for a specific country - e.g. Australia wheat N ~39 kg/ha, other cereals N ~34 kg/ha. Application rate is not export load; combine with an export fraction.",
+      "verified": "web"
+    },
+    "hooftman2025": {
+      "citation": "Hooftman, D. A. P., Ziv, G., Evans, P. M., & Bullock, J. M. (2025). Validation of the InVEST nutrient retention model across Europe with attribution of model errors. Environmental Modelling & Software, 106657.",
+      "doi": "10.1016/j.envsoft.2025.106657",
+      "url": "https://www.sciencedirect.com/science/article/pii/S136481522500341X",
+      "type": "peer-reviewed",
+      "scope": "continental (Europe)",
+      "provides": ["load_n", "load_p", "eff_n", "eff_p"],
+      "context": "Validates InVEST nutrient retention across European catchments and attributes error sources. Useful as a cross-check on NDR parameterisation choices and on where the model is weak; not a single lookup table.",
+      "verified": "web"
+    },
+    "asante2008": {
+      "citation": "Asante, K. O., Artan, G. A., Pervez, S., Bandaragoda, C., & Verdin, J. P. (2008). Technical Manual for the Geospatial Stream Flow Model (GeoSFM). U.S. Geological Survey Open-File Report 2007-1441.",
+      "url": "https://pubs.usgs.gov/of/2007/1441/",
+      "type": "government technical manual",
+      "scope": "global (operational, USGS FEWS NET)",
+      "provides": ["curve_number"],
+      "context": "SCS curve numbers for hydrologic soil groups A-D by a coarse global land-cover legend (urban/built-up, dryland cropland & pasture, irrigated cropland & pasture, grassland, shrubland, mixed forest, evergreen broadleaf forest, barren/sparse, herbaceous wetland, water). Operational continental hydrology; CN are class defaults, antecedent runoff condition II.",
+      "verified": "excel"
+    },
+    "jaafar2019": {
+      "citation": "Jaafar, H. H., Ahmad, F. A., & El Beyrouthy, N. (2019). GCN250, new global gridded curve numbers for hydrologic modeling and design. Scientific Data, 6(1), 145.",
+      "doi": "10.1038/s41597-019-0155-x",
+      "url": "https://www.nature.com/articles/s41597-019-0155-x",
+      "type": "peer-reviewed (data descriptor)",
+      "scope": "global, 250 m",
+      "provides": ["curve_number"],
+      "context": "Global 250 m curve numbers from ESA CCI land cover 2015 (300 m) crossed with HYSOGs250m hydrologic soil groups, for dry / average / wet antecedent runoff conditions (ARC I / II / III). Global CN were 62 / 78 / 90 for dry / average / wet. The FS28 file used the ARC II (average) tabulated CN-by-class-by-HSG for classes better matched by CCI-LC (needleleaf/broadleaf forest, natural grassland, bare/fallow, etc.). InVEST SWY expects ARC II.",
+      "verified": "web"
+    },
+    "ray2010": {
+      "citation": "Ray, D. K., Duckles, J. M., & Pijanowski, B. C. (2010). The impact of future land use scenarios on runoff volumes in the Muskegon River Watershed. Environmental Management, 46(3), 351-366.",
+      "doi": "10.1007/s00267-010-9533-z",
+      "url": "https://link.springer.com/article/10.1007/s00267-010-9533-z",
+      "type": "peer-reviewed",
+      "scope": "regional (Muskegon River Watershed, Michigan, USA; humid continental)",
+      "provides": ["curve_number"],
+      "context": "SCS-CN runoff modelling under future land-use scenarios for a temperate humid-continental watershed. Referenced in the FS28 file for CN method context.",
+      "verified": "excel"
+    },
+    "allen1998": {
+      "citation": "Allen, R. G., Pereira, L. S., Raes, D., & Smith, M. (1998). Crop Evapotranspiration: Guidelines for Computing Crop Water Requirements. FAO Irrigation and Drainage Paper 56.",
+      "url": "https://www.fao.org/3/x0490e/x0490e00.htm",
+      "type": "FAO guideline",
+      "scope": "global (method)",
+      "provides": ["kc", "root_depth"],
+      "context": "The FAO-56 reference for crop coefficient Kc (ratio of crop ET to reference ET) and for effective rooting depth by crop. In the FS28 file Kc was estimated per land-cover class from Copernicus 300 m LAI time series via the FAO-56 LAI relationship (k=0.5), capped at Kc <= 1.2, monthly.",
+      "verified": "standard"
+    },
+    "canadell1996": {
+      "citation": "Canadell, J., Jackson, R. B., Ehleringer, J. R., Mooney, H. A., Sala, O. E., & Schulze, E.-D. (1996). Maximum rooting depth of vegetation types at the global scale. Oecologia, 108(4), 583-595.",
+      "doi": "10.1007/BF00329030",
+      "url": "https://link.springer.com/article/10.1007/BF00329030",
+      "type": "peer-reviewed",
+      "scope": "global (11 biomes, 290 observations, 253 species)",
+      "provides": ["root_depth"],
+      "context": "Maximum rooting depth by biome and growth form. Global mean 4.6 +/- 0.5 m; by growth form trees 7.0 +/- 1.2 m, shrubs 5.1 +/- 0.8 m, herbaceous 2.6 +/- 0.1 m; by biome boreal forest 2.0 m to tropical grassland/savanna 15.0 m. These are MAXIMUM depths - larger than the 'depth of 95% of root biomass' InVEST AWY usually wants.",
+      "verified": "web"
+    },
+    "jackson1996": {
+      "citation": "Jackson, R. B., Canadell, J., Ehleringer, J. R., Mooney, H. A., Sala, O. E., & Schulze, E.-D. (1996). A global analysis of root distributions for terrestrial biomes. Oecologia, 108(3), 389-411.",
+      "doi": "10.1007/BF00333714",
+      "url": "https://link.springer.com/article/10.1007/BF00333714",
+      "type": "peer-reviewed",
+      "scope": "global (terrestrial biomes)",
+      "provides": ["root_depth"],
+      "context": "Vertical root distributions (cumulative-root-fraction beta model) by biome; lets you convert a target cumulative root fraction (e.g. 95%) to a soil depth for each biome.",
+      "verified": "web"
+    },
+    "schenk2002": {
+      "citation": "Schenk, H. J., & Jackson, R. B. (2002). The global biogeography of roots. Ecological Monographs, 72(3), 311-328.",
+      "doi": "10.1890/0012-9615(2002)072[0311:TGBOR]2.0.CO;2",
+      "url": "https://esajournals.onlinelibrary.wiley.com/doi/abs/10.1890/0012-9615(2002)072%5B0311%3ATGBOR%5D2.0.CO%3B2",
+      "type": "peer-reviewed",
+      "scope": "global (475 root profiles, 209 locations, ~15 biomes)",
+      "provides": ["root_depth"],
+      "context": "Rooting depth for cumulative root fractions by biome. Globally, depths of ~0.4 / 0.7 / 1.1 m hold ~80 / 90 / 95% of roots; deeper in water-limited woody systems, shallower in tundra/boreal. The 95%-biomass depth here is the quantity InVEST AWY 'root_depth' most closely represents.",
+      "verified": "web"
+    },
+    "hargreaves1985": {
+      "citation": "Hargreaves, G. H., & Samani, Z. A. (1985). Reference crop evapotranspiration from temperature. Applied Engineering in Agriculture, 1(2), 96-99.",
+      "doi": "10.13031/2013.26773",
+      "type": "peer-reviewed",
+      "scope": "global (method)",
+      "provides": ["eto_method"],
+      "context": "Temperature-based reference ET (ETo) from tmin/tmax and extraterrestrial radiation. Used by the FS28 file (and by fetch_climate variable=eto) to produce ETo where Penman-Monteith inputs are unavailable. Modelled, not measured.",
+      "verified": "standard"
+    },
+    "ipcc2006_v4": {
+      "citation": "IPCC (2006). 2006 IPCC Guidelines for National Greenhouse Gas Inventories, Volume 4: Agriculture, Forestry and Other Land Use. Eggleston, H.S. et al. (eds). IGES, Japan.",
+      "url": "https://www.ipcc-nggip.iges.or.jp/public/2006gl/vol4.html",
+      "type": "intergovernmental guideline",
+      "scope": "global, by climate domain / ecological zone",
+      "provides": ["c_above", "c_below", "c_soil", "c_dead"],
+      "context": "Tier-1 defaults: aboveground biomass in natural forest by climate domain (Table 4.7), root-to-shoot ratios (Table 4.4), biomass carbon fraction 0.47 (Table 4.3), reference mineral-soil SOC stocks to 30 cm by climate/soil type (Table 2.3), and stock-change factors for land use / management / input (Table 5.5). The standard basis for InVEST carbon pools when local inventory is absent.",
+      "verified": "standard"
+    },
+    "ipcc2019_v4": {
+      "citation": "IPCC (2019). 2019 Refinement to the 2006 IPCC Guidelines for National Greenhouse Gas Inventories, Volume 4: Agriculture, Forestry and Other Land Use. Calvo Buendia, E. et al. (eds). IPCC, Switzerland.",
+      "url": "https://www.ipcc-nggip.iges.or.jp/public/2019rf/vol4.html",
+      "type": "intergovernmental guideline",
+      "scope": "global, updated biomass and SOC defaults",
+      "provides": ["c_above", "c_below", "c_soil", "c_dead"],
+      "context": "Updates the 2006 Tier-1 biomass tables (more disaggregated by continent and forest type, with uncertainty) and SOC reference stocks. Use in preference to 2006 where a matching climate/continent/forest-type row exists.",
+      "verified": "standard"
+    },
+    "ruesch2008": {
+      "citation": "Ruesch, A., & Gibbs, H. K. (2008). New IPCC Tier-1 Global Biomass Carbon Map for the Year 2000. Carbon Dioxide Information Analysis Center, Oak Ridge National Laboratory.",
+      "url": "https://cdiac.ess-dive.lbl.gov/epubs/ndp/global_carbon/carbon_documentation.html",
+      "type": "dataset + documentation",
+      "scope": "global, spatial",
+      "provides": ["c_above", "c_below"],
+      "context": "Spatially explicit application of IPCC 2006 Tier-1 biomass carbon defaults, combining a global land-cover map with continent x ecofloristic-zone x frontier-forest rules. A ready way to get spatially varying c_above + c_below without hand-building a table; still Tier-1.",
+      "verified": "standard"
+    },
+    "gedtm30": {
+      "citation": "Hengl, T. et al. (2025). GEDTM30: a global 1 arc-second (~30 m) Digital Terrain Model from machine-learning data fusion of ICESat-2 and GEDI. OpenLandMap / Zenodo.",
+      "url": "https://zenodo.org/records/14900181",
+      "type": "dataset",
+      "scope": "global, ~30 m",
+      "provides": ["dem"],
+      "context": "The DEM used by the FS28 file. Listed here only for provenance of that profile; DEM choice is a fetch/prep concern, not a coefficient.",
+      "verified": "web"
+    }
+  }
+}
