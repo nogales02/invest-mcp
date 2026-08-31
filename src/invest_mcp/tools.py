@@ -7,8 +7,8 @@
     results        list_invest_job_artifacts, summarize_results,
                    compare_scenarios
     data prep      scaffold_project, project_readiness, fetch_dem,
-                   fetch_landcover, reproject_layer, clip_to_aoi,
-                   align_raster_stack, delineate_watersheds,
+                   fetch_landcover, fetch_climate, reproject_layer,
+                   clip_to_aoi, align_raster_stack, delineate_watersheds,
                    tables_from_template
     admin          invest_env, allow_input_dir
 
@@ -882,6 +882,78 @@ def fetch_landcover(dst_path: str, aoi_path: str = "", bbox: list[float] | None 
     return {"ok": bool(res.get("ok")), "dst": dst, "aoi": aoi, **res}
 
 
+def fetch_climate(dst_path: str, variable: str, aoi_path: str = "",
+                  bbox: list[float] | None = None, source: str = "worldclim",
+                  period: str = "monthly", months: list[int] | None = None,
+                  resolution: str = "10m", target_crs: str = "",
+                  target_resolution: list[float] | None = None,
+                  clip_to_aoi: bool = True, buffer_deg: float = 0.05,
+                  resampling: str = "bilinear",
+                  keep_intermediate: bool = False) -> dict[str, Any]:
+    """Download the climate rasters the water-yield models need, for an AOI.
+
+    Source (`source="worldclim"`, the only one wired up): **WorldClim v2.1**
+    1970-2000 monthly climatology (no credentials, contacts
+    `geodata.ucdavis.edu` only). `resolution` is `"10m"` (~18 km, fast, default),
+    `"5m"`, `"2.5m"` or `"30s"` (~1 km).
+
+    `variable`:
+      - `"precipitation"` -> WorldClim `prec` (mm).
+      - `"eto"` -> reference ET computed with **Hargreaves-Samani** from WorldClim
+        `tmin`/`tmax`/`tavg` (this is modelled, not measured -- swap in a local
+        ETo grid if you have one).
+
+    `period`:
+      - `"monthly"` -> 12 rasters (the Seasonal Water Yield shape). `dst_path`
+        MUST contain `{month}`, e.g. `.../precip_{month}.tif` -> `precip_1.tif`
+        ... `precip_12.tif`. `months=[6,7,8]` fetches a subset.
+      - `"annual"` -> one raster, the sum of the 12 months (the Annual Water
+        Yield shape).
+
+    Give the area as `aoi_path` and/or `bbox` in lon/lat degrees. Writes under
+    `dst_path`'s folder (must be allowed). Needs the `invest-geo` env.
+    """
+    if variable not in ("precipitation", "eto"):
+        return {"ok": False, "error": "variable must be 'precipitation' or 'eto'"}
+    if (source or "worldclim") != "worldclim":
+        return {"ok": False, "error": "only source='worldclim' is wired up"}
+    if period not in ("monthly", "annual"):
+        return {"ok": False, "error": "period must be 'monthly' or 'annual'"}
+    if resolution not in ("10m", "5m", "2.5m", "30s"):
+        return {"ok": False, "error": "resolution must be 10m, 5m, 2.5m or 30s"}
+    if period == "monthly" and "{month}" not in dst_path:
+        return {"ok": False, "error": "monthly period needs '{month}' in dst_path, "
+                                      "e.g. .../precip_{month}.tif"}
+    if not aoi_path and not bbox:
+        return {"ok": False, "error": "provide aoi_path or bbox [minx,miny,maxx,maxy] (lon/lat)"}
+    if bbox is not None and len(bbox) != 4:
+        return {"ok": False, "error": "bbox must be [minx, miny, maxx, maxy] in lon/lat degrees"}
+    if months is not None and any(int(m) < 1 or int(m) > 12 for m in months):
+        return {"ok": False, "error": "months must be in 1..12"}
+
+    roots = _SETTINGS.allowed_roots()
+    probe = dst_path.replace("{month}", "1")
+    try:
+        resolve_output_path(probe, roots)                    # folder must be allowed
+        aoi = str(resolve_input_path(aoi_path, roots)) if aoi_path else None
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    try:
+        res = geo_client.run_fetch_climate(
+            dst_path, variable, _SETTINGS, source="worldclim", period=period,
+            months=[int(m) for m in months] if months else None,
+            resolution=resolution,
+            bbox_wgs84=[float(v) for v in bbox] if bbox else None,
+            aoi_path=aoi, clip_to_aoi=bool(clip_to_aoi), buffer_deg=float(buffer_deg),
+            target_crs=(str(target_crs) or None), target_resolution=target_resolution,
+            resampling=resampling or "bilinear",
+            keep_intermediate=bool(keep_intermediate))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    return {"ok": bool(res.get("ok")), "aoi": aoi, **res}
+
+
 def tables_from_template(model_id: str, lulc_path: str, dst_path: str,
                          table_arg: str = "", legend_path: str = "",
                          include_optional: bool = True,
@@ -1205,6 +1277,7 @@ _TOOLS = [
     project_readiness,
     fetch_dem,
     fetch_landcover,
+    fetch_climate,
     reproject_layer,
     clip_to_aoi,
     align_raster_stack,

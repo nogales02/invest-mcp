@@ -108,19 +108,20 @@ src/invest_mcp/
     biotable.py      esqueleto de tabla biofísica: expande columnas [MONTH]/[SOIL_GROUP], ensambla el CSV (una fila por lucode, celdas en blanco), parsea leyenda (stdlib; puro)
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
-    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds + run_fetch_dem/run_fetch_landcover; subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds + run_fetch_dem/run_fetch_landcover/run_fetch_climate; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
     summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
     compare.py       (CORRE EN invest-geo) alinea escenario->baseline, ráster diferencia + delta stats + zonal + escribe compare.json
     prep.py          (CORRE EN invest-geo) rutinas deterministas: op=reproject|clip|align_stack|raster_classes (raster+vector); lee JSON de stdin, escribe salidas + describe cada capa
     hydro.py         (CORRE EN invest-geo) delineación de cuencas: pygeoprocessing fill_pits→flow_dir_d8→flow_accum→extract_streams_d8→snap outlets→delineate_watersheds_d8; escribe el vector de cuencas + intermedios en `<dst_stem>_hydro/`
-    fetch.py         (CORRE EN invest-geo, TOCA RED) op=dem|landcover: descarga de buckets AWS públicos vía GDAL `/vsicurl/` (sin auth) — dem=Copernicus GLO-30 (`copernicus-dem-30m`, tiles 1°), landcover=ESA WorldCover 10m 2020/2021 (`esa-worldcover`, tiles 3°, +class_legend). Pipeline común `_download_layer`: mosaica → reproyecta/recorta reusando `prep._op_reproject`/`_op_clip`
+    fetch.py         (CORRE EN invest-geo, TOCA RED) op=dem|landcover: descarga de buckets AWS públicos vía GDAL `/vsicurl/` (sin auth) — dem=Copernicus GLO-30 (`copernicus-dem-30m`, tiles 1°), landcover=ESA WorldCover 10m 2020/2021 (`esa-worldcover`, tiles 3°, +class_legend). `_download_layer` mosaica; `reproject_clip_describe` = cola común (reproyecta/recorta vía `prep`, describe) — la reusa `climate.py`
+    climate.py       (CORRE EN invest-geo, TOCA RED) precip/ETo de **WorldClim v2.1** (climatología mensual, sin auth, `/vsizip//vsicurl/`): variable=precipitation (`prec`, mm) | eto (Hargreaves-Samani desde `tmin/tmax/tavg` + Ra por latitud/DOY). period=monthly (12 ficheros, `{month}` en dst) | annual (suma). resolution 10m..30s
     _preview_worker.py  (SUBPROCESO AISLADO) rinde el PNG de preview (matplotlib), best-effort; `--diverging` = RdBu_r centrado en 0 para un ráster diferencia
   calibration/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 27 tools MCP + register(server)
+  tools.py           las 28 tools MCP + register(server)
   resources.py       4 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos) + register(server)
   prompts.py         2 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios) + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
@@ -131,12 +132,13 @@ INSTALL.md           referencia terse: prereqs + snippets de config por cliente 
 tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_calibration_tools, test_summarize, test_compare,
                      test_prep, test_readiness, test_resources_prompts,
-                     test_hydro, test_biotable, test_fetch  (83 tests)
+                     test_hydro, test_biotable, test_fetch,
+                     test_climate  (94 tests, 1 skip sin numpy)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
-`geo/hydro.py`, `geo/fetch.py`) **solo importan stdlib al cargar**;
-rasterio/pyproj/shapely/pyogrio/geopandas/pygeoprocessing se
+`geo/hydro.py`, `geo/fetch.py`, `geo/climate.py`) **solo importan stdlib al
+cargar**; rasterio/pyproj/shapely/pyogrio/geopandas/pygeoprocessing/numpy se
 importan dentro de las funciones (para que el env `.venv` pueda importar el
 módulo sin GDAL, aunque nunca lo ejecuta).
 
@@ -148,7 +150,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (27 tools) + 4 resources + 2 prompts
+## 4. Tool surface (28 tools) + 4 resources + 2 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -168,6 +170,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `compare_scenarios(baseline_job_id, scenario_job_id, aoi_path="", rasters=None, include_intermediate=False, make_preview=True)` | Baseline vs escenario alternativo del **mismo modelo** (el propósito de InVEST — tradeoffs). Por cada ráster de salida presente en ambos runs: alinea el escenario a la malla del baseline (reproyecta si difieren), escribe `diff_<nombre>.tif` = `escenario - baseline`, y reporta total antes/después, Δ y % de cambio, px que suben/bajan/igual, histograma de Δ, zonal de Δ por feature sobre un AOI, digest NL y un PNG de preview con colormap divergente. Escribe `<scen_jobdir>/compare_vs_<baseline_job_id>/compare.json`. Necesita el env `invest-geo`. |
 | `fetch_dem(dst_path, aoi_path="", bbox=None, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="bilinear", source="cop30", keep_intermediate=False)` | **TOCA RED.** Descarga un DEM para el AOI y lo deja como GeoTIFF. `source="cop30"` (único cableado): **Copernicus GLO-30** (~30 m) del bucket AWS público `copernicus-dem-30m` — sin credenciales, contacta solo `copernicus-dem-30m.s3.amazonaws.com`. Área por `aoi_path` (vector; sus bounds mandan y con `clip_to_aoi` enmascara al polígono) y/o `bbox` `[minx,miny,maxx,maxy]` en **lon/lat (EPSG:4326)**. `buffer_deg` pad; `target_crs`/`target_resolution` reproyectan (reusa `prep._op_reproject`/`_op_clip`). Tiles oceánicos/fuera de cobertura → `tiles_missing`. Necesita `invest-geo`. |
 | `fetch_landcover(dst_path, aoi_path="", bbox=None, year=2021, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="nearest", source="worldcover", keep_intermediate=False)` | **TOCA RED.** Igual que `fetch_dem` pero **ESA WorldCover 10 m** (`year` 2020/2021, 11 clases) del bucket AWS público `esa-worldcover` (sin auth, contacta `esa-worldcover.s3.eu-central-1.amazonaws.com`). `resampling="nearest"` por defecto (categórico). La respuesta trae `class_legend` (valor→etiqueta) listo para `tables_from_template`. Necesita `invest-geo`. |
+| `fetch_climate(dst_path, variable, aoi_path="", bbox=None, source="worldclim", period="monthly", months=None, resolution="10m", target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="bilinear", keep_intermediate=False)` | **TOCA RED.** Climatología de **WorldClim v2.1** (1970–2000, sin auth, contacta `geodata.ucdavis.edu`). `variable`: `precipitation` (`prec`, mm) o `eto` (ETo **Hargreaves-Samani** desde `tmin/tmax/tavg` + Ra por latitud/DOY — *modelada*, no medida). `period="monthly"` → 12 rásters (forma de SWY; `dst_path` **debe** llevar `{month}`, p.ej. `precip_{month}.tif`); `period="annual"` → 1 ráster = suma (forma de AWY). `months=[6,7,8]` subconjunto. `resolution` `10m`(def, ~18 km)/`5m`/`2.5m`/`30s`(~1 km). Necesita `invest-geo`. |
 | `scaffold_project(root, name="", target_crs="", aoi_path="", overwrite=False)` | Crea el árbol de "proyecto InVEST" (`data/raw`, `data/processed`, `tables`, `datastacks`, `jobs`, `logs`) + `project.json` (nombre, CRS objetivo, AOI, `datasets: []`). Añade `root` a la allow-list de la sesión (lecturas y **escrituras**). Idempotente; `overwrite` solo reescribe el `project.json`. No necesita `invest-geo`. |
 | `project_readiness(root, models=None)` | Escanea `data/` + `tables/` del proyecto, adivina el rol de cada fichero por su nombre (`dem`, `lulc`, `watersheds`, `biophysical_table`…) y lo casa contra los inputs **required** de cada modelo. Devuelve `inventory`, `assessments` (por modelo: `matched` / `ambiguous` / `missing` / `needs_values`), `ready_to_attempt`, `gaps_by_model` y un digest NL. **Apoya** la decisión de qué correr, no la toma. Los inputs numéricos/opción van en `needs_values`, no bloquean. No necesita `invest-geo`. |
 | `reproject_layer(src_path, dst_path, target_crs, resampling="nearest", resolution=None)` | Reproyecta un ráster o vector a `target_crs` (EPSG/WKT/proj). `resampling` (solo ráster): `nearest` para categóricos (land cover), `bilinear`/`cubic`/`average` para continuos. `resolution` `[x,y]` opcional = tamaño de píxel objetivo. Necesita `invest-geo`. |
@@ -203,6 +206,48 @@ Convenciones:
 ---
 
 ## 5. Estado actual
+
+### ⟳ Para retomar (2026-08-30) — dónde estamos
+
+Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
+8–10). Todo verificado end-to-end contra `Dummy_InVEST` o un bbox de los Alpes.
+**28 tools + 4 resources + 2 prompts. 94 tests en verde** (`pytest -q`, 1 skip).
+
+**7 ramas apiladas sobre `main`, NINGUNA fusionada** (cada PR apunta a la de
+abajo; fusionar en este orden o hacer squash de todas):
+
+```
+main
+ └─ data-prep-routines        d951843  scaffold_project + reproject/clip/align_raster_stack + resolve_output_path
+     └─ readiness-resources-prompts  622a3cd  project_readiness + 4 resources + 2 prompts (resources.py, prompts.py)
+         └─ delineate-watersheds     404ad9c  geo/hydro.py (cadena D8 pygeoprocessing)
+             └─ tables-from-template 2d7780d  workspace/biotable.py + op=raster_classes + spec_translate.table_arg_specs
+                 └─ fetch-dem        d6453d1  geo/fetch.py op=dem (Copernicus GLO-30, sin auth)
+                     └─ fetch-landcover  de81391  geo/fetch.py op=landcover (ESA WorldCover, sin auth)
+                         └─ fetch-climate  bd36ba4  geo/climate.py (WorldClim precip + Hargreaves ETo)   ← HEAD
+```
+
+Todas pusheadas a `github.com/nogales02/invest-mcp`. `gh` CLI **no** está
+instalado en esta máquina → los PRs se abren a mano con el link que da `git
+push`.
+
+**Cadena de preparación ya montada** (todas las tools existen y están
+verificadas): `scaffold_project` → `fetch_dem`/`fetch_landcover`/`fetch_climate`
+→ `reproject_layer`/`clip_to_aoi`/`align_raster_stack` → `delineate_watersheds`
+→ `tables_from_template` → `project_readiness` → `validate_invest_args` →
+`run_invest_model` → `summarize_results`/`compare_scenarios`.
+
+**Gotcha de esta sesión:** el acceso a S3 (`*.s3.amazonaws.com`) desde esta
+máquina fue **intermitente** — algunas aperturas `/vsicurl/` tardaron >180 s o
+colgaron (p.ej. el tile COP30 de Angola), otras fueron rápidas (Alpes). No es
+bug del código; reintentar si un `fetch_*` cuelga.
+
+**Siguientes candidatos** (roadmap §6, "Capacidades pendientes por etapa"):
+`fetch_soil` (SoilGrids) · `fetch_hydrography` (HydroSHEDS) · `fetch_climate`
+`source="terraclimate"`/`"chirps"` · base de coeficientes citados `[resource]`
+para rellenar las tablas de `tables_from_template` · `import_datastack` /
+`export_datastack` (punto de integración con el Workbench, aún sin tool) ·
+`build_report`.
 
 ### Funciona / verificado
 - Autodetección de `invest.exe` + envs `invest-geo` / `invest-cal`; `invest_env`,
@@ -319,9 +364,15 @@ Convenciones:
   clases en la respuesta. Comparte `_download_layer` con `fetch_dem`; solo cambia
   la enumeración de tiles (3° vs 1°) y el default de resampling (nearest vs
   bilinear).
-- 83 tests en verde (nuevos `test_prep`, `test_readiness`, `test_resources_prompts`,
-  `test_hydro`, `test_biotable`, `test_fetch` — todo puro). Registrado y "Connected"
-  en Claude Code.
+- **`fetch_climate`** (`geo/climate.py`, TOCA RED) end-to-end (2026-08-30) sobre
+  un bbox de los Alpes (~45.9°N 6.9°E): WorldClim 10m vía `/vsizip//vsicurl/`.
+  `precipitation` anual → **1547 mm/yr** (reproyectado a UTM 32N @ 1 km),
+  realista para Chamonix. `eto` Hargreaves meses 1/6/12 → **10.8 / 86.1 / 10.0
+  mm/mes** (pico estival fuerte, correcto). `_ra_mm_per_day`: 45°N jun/dic =
+  17.1/4.3, ecuador jun = 13.6 mm/d — físicamente sano. `reproject_clip_describe`
+  extraído de `fetch._download_layer` y reusado.
+- 94 tests en verde (+ `test_climate`; 1 skip: test de `_ra_mm_per_day` necesita
+  numpy, ausente del `.venv`). Registrado y "Connected" en Claude Code.
 
 ### Pendiente
 - `conda-lock` para solves 100% reproducibles entre plataformas.
@@ -394,9 +445,13 @@ receta que el LLM sigue y adapta.
   `op=landcover`, `source="worldcover"` (ESA WorldCover 10 m 2020/2021 del bucket
   AWS público, sin auth). Comparte `_download_layer` con `fetch_dem`. Verificado
   end-to-end (ver §5). Pendiente: ESRI LC / Dynamic World.
-- `[tool]` `fetch_climate` / `fetch_soil` / `fetch_hydrography` — mismo patrón
-  (`geo/fetch.py` `op=...`): CHIRPS/WorldClim/TerraClimate, SoilGrids, HydroSHEDS.
-  Ver `invest://data-sources`.
+- ~~`[tool]` `fetch_climate`~~ **PARCIAL** (2026-08-30) — `geo/climate.py`,
+  `source="worldclim"` (WorldClim v2.1, sin auth, `/vsizip//vsicurl/`):
+  `precipitation` + `eto` (Hargreaves), monthly/annual. Verificado end-to-end
+  (ver §5). Pendiente: `source="terraclimate"` (años reales, netCDF — necesita
+  sintaxis `NETCDF:` + subdataset), `source="chirps"` (trópicos).
+- `[tool]` `fetch_soil` / `fetch_hydrography` — mismo patrón (`geo/fetch.py`
+  `op=...` o módulo propio): SoilGrids, HydroSHEDS. Ver `invest://data-sources`.
 - Afinar `fetch_*`: chunking para AOIs grandes (mosaica en memoria); poblar
   `datasets` del `project.json` desde estas rutinas.
 - ~~`[tool]` `delineate_watersheds`~~ **HECHO** (2026-08-30) — `geo/hydro.py`,

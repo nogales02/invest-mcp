@@ -146,12 +146,37 @@ def _resolve_bbox(payload: dict):
     return bbox, aoi
 
 
+def reproject_clip_describe(wgs84_tif, dst, work, *, target_crs=None,
+                            target_resolution=None, resampling=None,
+                            default_resampling="bilinear",
+                            clip_aoi_path=None) -> dict:
+    """Common tail for every fetch: take an EPSG:4326 GeoTIFF, optionally
+    reproject and clip it to the AOI polygon, and describe the result. Reuses
+    the prep primitives. Also used by :mod:`invest_mcp.geo.climate`."""
+    from invest_mcp.geo.prep import _describe_raster, _op_clip, _op_reproject
+
+    dst = Path(dst)
+    current = str(wgs84_tif)
+    if target_crs:
+        rp = str(Path(work) / f"{dst.stem}_proj.tif")
+        _op_reproject({"src": current, "dst": rp, "target_crs": target_crs,
+                       "resampling": resampling or default_resampling,
+                       "resolution": target_resolution, "kind": "raster"})
+        current = rp
+    if clip_aoi_path:
+        _op_clip({"src": current, "dst": str(dst), "aoi": clip_aoi_path,
+                  "kind": "raster", "all_touched": True})
+    else:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(current, dst)
+    return _describe_raster(dst)
+
+
 def _download_layer(payload: dict, urls: list[tuple[str, str]], *,
                     nodata_override: float | None, default_resampling: str,
                     coverage_hint: str) -> dict:
-    """Shared pipeline: open the /vsicurl/ tiles that exist, mosaic to the bbox,
-    then reproject / clip via the prep primitives. Returns
-    ``{"raster", "tiles_used", "tiles_missing"}``."""
+    """Open the /vsicurl/ tiles that exist, mosaic to the bbox, then reproject /
+    clip. Returns ``{"raster", "tiles_used", "tiles_missing"}``."""
     import rasterio
     from rasterio.merge import merge as rio_merge
 
@@ -191,25 +216,12 @@ def _download_layer(payload: dict, urls: list[tuple[str, str]], *,
     with rasterio.open(src_tif, "w", **profile) as out:
         out.write(mosaic[0], 1)
 
-    from invest_mcp.geo.prep import _describe_raster, _op_clip, _op_reproject
-
-    current = src_tif
-    if payload.get("target_crs"):
-        rp = str(work / "layer_proj.tif")
-        _op_reproject({"src": current, "dst": rp, "target_crs": payload["target_crs"],
-                       "resampling": payload.get("resampling") or default_resampling,
-                       "resolution": payload.get("target_resolution"),
-                       "kind": "raster"})
-        current = rp
-
-    if payload.get("clip_to_aoi") and payload.get("aoi_path"):
-        _op_clip({"src": current, "dst": str(dst), "aoi": payload["aoi_path"],
-                  "kind": "raster", "all_touched": True})
-    else:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(current, dst)
-
-    desc = _describe_raster(dst)
+    desc = reproject_clip_describe(
+        src_tif, dst, work, target_crs=payload.get("target_crs"),
+        target_resolution=payload.get("target_resolution"),
+        resampling=payload.get("resampling"), default_resampling=default_resampling,
+        clip_aoi_path=payload["aoi_path"] if payload.get("clip_to_aoi")
+        and payload.get("aoi_path") else None)
     if not payload.get("keep_intermediate"):
         shutil.rmtree(work, ignore_errors=True)
     return {"raster": desc, "tiles_used": used, "tiles_missing": missing}
