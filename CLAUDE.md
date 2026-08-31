@@ -125,8 +125,23 @@ src/invest_mcp/
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
   tools.py           las 32 tools MCP + register(server)
-  resources.py       4 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos) + register(server)
+  resources.py       6 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, base de coeficientes citados + sus ficheros) + register(server)
   prompts.py         2 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios) + register(server)
+  knowledge/
+    __init__.py      paquete de DATOS de referencia (nunca lógica): base de coeficientes citados
+    coefficients.py  loader stdlib puro: entry(name)/index()/PARAMETERS/PROFILES; lee los JSON de coefficients/ y los sirve como texto
+    coefficients/    base de coeficientes citados para las tablas biofísicas/lookup de InVEST (v1, mayormente del FS28-Moorabool_MasterFile; root_depth + carbon_pools de refs estándar):
+      README.md        cómo elegir un valor (5 pasos), por qué NO se casa con una leyenda, forma de cada registro
+      sources.json     bibliografía: por fuente citation/doi/url/type/scope/provides/context/verified (web|excel|standard)
+      usle_c.json      ~29 registros — Yang 2003 (medias globales por clase), Bakker 2008 (parcelas Europa), Teng 2016 (Australia RUSLE ~1km), Benavidez 2018 (cultivos, by_source Panagos/David/Morgan), Xiong 2023 (por bioma), Wischmeier 1978 (laboreo)
+      usle_p.json      6 registros — P=1 por defecto, contorno por pendiente (Wischmeier 1978), fajas (Renard 1997), terrazas (Renard 1997 + Chen 2017), medias globales (Xiong 2019)
+      ndr_nutrient.json  ~19 registros — Raji 2020 (Sokoto-Rima, semi-árido tropical: set NDR completo con crit_len + proportion_subsurface), Redhead 2018 (GB nacional, LCM2007), Ludemann 2022 (fertilizante Australia por cultivo), fila BMP % reducción
+      curve_number.json  ~15 registros — Asante 2008/GeoSFM (mayoría de clases), Jaafar 2019/GCN250 (suelo desnudo, plantaciones, pastizal nativo buen estado); values = {CN_A..CN_D}; InVEST SWY espera ARC II
+      kc.json          2 registros — Kc anual medio por clase DEECA vía LAI (FAO-56 desde Copernicus LAI 300m, k=0.5, cap 1.2) + Kc de referencia FAO-56 por forma de cultivo; Kc mensuales viven en el profile
+      root_depth.json  ~11 registros (NUEVO) — por bioma/forma: max_root_depth_mm (Canadell 1996) + d95_mm (Schenk & Jackson 2002); cultivos usan effective_root_depth_mm (FAO-56); nota de convención max vs D95 + min(root_depth, soil_depth)
+      carbon_pools.json  ~11 registros (NUEVO) — por bioma: values = {c_above,c_below,c_soil,c_dead} en Mg C/ha (NO biomasa, NO CO2e) + ranges; método de ensamblaje IPCC (AGB×0.47, ratio R:S, SOC ref × factores); IPCC 2006/2019 Vol4 + Ruesch & Gibbs 2008; todo confidence "low" (Tier-1)
+      profiles/
+        moorabool_fs28.json  ejemplo trabajado (NO defaults): parametrización FS28 completa para la cuenca del Moorabool, Victoria — study_context, raster_inputs, factores de cambio climático SSP2-4.5, legend_crosswalk, biophysical_table (18 filas), kc_monthly, nbs_maturation, known_inconsistency, sources_used
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
 environment-server.yml  env conda "invest-mcp" (python+pip) para el servidor sin Python del sistema
 scripts/             bootstrap.ps1 (Windows) / bootstrap.sh (POSIX): elige server env (.venv o conda invest-mcp) + pip + setup + doctor + mcp-config
@@ -137,7 +152,8 @@ tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_prep, test_readiness, test_resources_prompts,
                      test_hydro, test_biotable, test_fetch,
                      test_climate, test_soil, test_hydrography,
-                     test_datastack  (141 tests, 6 skip sin numpy)
+                     test_datastack, test_knowledge_coefficients
+                     (152 tests: 146 pass + 6 skip sin numpy)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
@@ -155,7 +171,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (32 tools) + 4 resources + 2 prompts
+## 4. Tool surface (32 tools) + 6 resources + 2 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -199,6 +215,16 @@ tool; solo datos, nunca decisiones:
 - `invest://conventions` — el layout de proyecto + campos de `project.json`.
 - `invest://data-sources` — catálogo curado de fuentes (DEM, land cover, clima,
   suelo, hidrografía) con URLs y notas.
+- `invest://coefficients` — índice de la base de coeficientes citados: por
+  parámetro (resource, aka, models, invest_column, units, definition,
+  record_count, source_keys), profiles, cómo elegir, bibliografía.
+- `invest://coefficients/{name}` — un fichero de la base: un parámetro
+  (`usle_c`, `usle_p`, `ndr_nutrient`, `curve_number`, `kc`, `root_depth`,
+  `carbon_pools`), `sources` (bibliografía), `readme` (cómo elegir un valor) o
+  un profile trabajado (`moorabool_fs28`). Registros indexados por atributos
+  semánticos de cobertura (forma, densidad de dosel, condición, manejo, bioma,
+  región, escala), NO por una leyenda concreta; el `crosswalk` es solo
+  orientativo. Cada valor lleva `source_key` + `confidence` + `verified`.
 
 **Prompts/playbooks MCP** (`prompts.py`) — recetas que el LLM sigue y adapta:
 - `prepare_and_run_model(model_id, project_root)` — de scaffold a summarize.
@@ -221,8 +247,21 @@ Convenciones:
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
 8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
 `Dummy_InVEST` o un bbox de los Alpes.
-**32 tools + 4 resources + 2 prompts. 141 tests en verde** (`pytest -q`, 6 skip
-sin numpy).
+**32 tools + 6 resources + 2 prompts. 152 tests en verde** (`pytest -q`, 146
+pass + 6 skip sin numpy).
+
+**Última sesión (2026-08-31):** base de **coeficientes citados** (`[resource]`,
+roadmap §6 punto 10) — paquete `src/invest_mcp/knowledge/coefficients/` con 7
+parámetros (`usle_c`, `usle_p`, `ndr_nutrient`, `curve_number`, `kc`,
+`root_depth`, `carbon_pools`) + `sources.json` (bibliografía verificada) +
+`README.md` + el profile trabajado `moorabool_fs28`. Poblada mayormente del
+`FS28-Moorabool_MasterFile.xlsx` (26 hojas, revisado hoja a hoja); `root_depth`
+y `carbon_pools` añadidos de refs estándar (Canadell 1996, Schenk & Jackson
+2002, FAO-56, IPCC 2006/2019 Vol4, Ruesch & Gibbs 2008). Registros
+legend-agnósticos (atributos semánticos de cobertura, no una leyenda), cada
+valor con cita + `confidence` + `verified` (`web`/`excel`/`standard`). Loader
+stdlib puro `knowledge/coefficients.py`; 2 resources nuevos; 11 tests nuevos
+(`test_knowledge_coefficients.py`). Sin commitear.
 
 **La pila de 11 ramas ESTÁ FUSIONADA en `main`** (2026-08-30). `main` =
 `8a56650` (`origin/main`), 11 merge-commits bottom-up (PRs #2, #12, #4, #5, #6,
@@ -265,9 +304,9 @@ frágil: una lectura de ventana puede cortarse a media franja
 **Siguientes candidatos** (roadmap §6, "Capacidades pendientes por etapa"):
 `fetch_hydrography` `source="hydrorivers_global"`/HydroBASINS lakes · `fetch_soil`
 PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) y refinar HSG con Ksat+profundidad · `fetch_climate`
-`source="terraclimate"`/`"chirps"` · base de coeficientes citados `[resource]`
-para rellenar las tablas de `tables_from_template` · `clone_job` ·
-`build_report` · `recommend_model` `[prompt]`.
+`source="terraclimate"`/`"chirps"` · `clone_job` · `build_report` ·
+`recommend_model` `[prompt]` · `check_table_vs_raster` `[tool]` (contra la base
+de coeficientes ya creada).
 
 ### Funciona / verificado
 - Autodetección de `invest.exe` + envs `invest-geo` / `invest-cal`; `invest_env`,
@@ -417,10 +456,18 @@ para rellenar las tablas de `tables_from_template` · `clone_job` ·
   fuera del sandbox sin bloquear; `import_datastack` lo reparseó → modelo
   resuelto, `required_missing []`, `files_missing []`, `ready`. `relative=True`
   reescribe rutas a `../data/…`.
-- 141 tests en verde (+ `test_hydrography` 16, `test_datastack` 15, +2 en
-  `test_soil`; 6 skips: helpers numpy — `_ra_mm_per_day`, triángulo textural,
-  EPIC K — con numpy ausente del `.venv`; se verifican en `invest-geo`).
-  Registrado y "Connected" en Claude Code.
+- **Base de coeficientes citados** (`knowledge/coefficients/`, 2026-08-31):
+  `kb.entry(name)` sirve cada JSON/MD como texto; `kb.index()` arma el catálogo.
+  Verificado por los 11 tests: todo fichero parsea y trae las claves core; todo
+  `source_key` usado (incl. `sources_used` del profile) existe en `sources.json`;
+  toda entrada de bibliografía lleva `context`+`verified`+`scope`; cordura física
+  (C ∈ [0,1], CN ordenado A≤B≤C≤D y ∈ (0,100], eff/proportion_subsurface ∈ [0,1]);
+  `resources.register` cablea `invest://coefficients` + `.../{name}`;
+  `coefficients_entry("bogus")` → JSON de error con la lista `known` (no lanza).
+- 152 tests en verde (146 pass — + `test_knowledge_coefficients` 11,
+  `test_hydrography` 16, `test_datastack` 15, +2 en `test_soil`; 6 skips: helpers
+  numpy — `_ra_mm_per_day`, triángulo textural, EPIC K — con numpy ausente del
+  `.venv`; se verifican en `invest-geo`). Registrado y "Connected" en Claude Code.
 
 ### Pendiente
 - `conda-lock` para solves 100% reproducibles entre plataformas.
@@ -466,11 +513,16 @@ para rellenar las tablas de `tables_from_template` · `clone_job` ·
 9. **Playbooks** (prompts MCP) — **PARCIAL** (2026-08-30): `prepare_and_run_model`
    + `compare_land_use_scenarios` en `prompts.py`. Pendiente: playbook de
    calibración, playbook multi-servicio.
-10. **Base de conocimiento** (resources) — **PARCIAL** (2026-08-30): `resources.py`
+10. **Base de conocimiento** (resources) — **PARCIAL** (2026-08-31): `resources.py`
     con catálogo de modelos, cheat-sheet por modelo, convención de carpetas y
-    catálogo de fuentes de datos. Pendiente: base de **coeficientes citados** por
-    clase de cobertura/región (para rellenar tablas biofísicas), unidades por
-    output, glosario.
+    catálogo de fuentes de datos. **+ base de coeficientes citados HECHA**
+    (`knowledge/coefficients/`, resources `invest://coefficients` +
+    `.../{name}`): 7 parámetros (`usle_c`, `usle_p`, `ndr_nutrient`,
+    `curve_number`, `kc`, `root_depth`, `carbon_pools`) + `sources.json` +
+    `README.md` + profile `moorabool_fs28`. Registros legend-agnósticos, cada
+    valor con cita verificada. Pendiente: más parámetros (`eff`/`crit_len` de
+    NDR fuera de zonas semi-áridas, C/P por más regiones), unidades por output,
+    glosario, `check_table_vs_raster`.
 11. **Cache content-addressed** por hash de inputs; **snapshots de JSON Schema** +
     diff en CI para detectar cambios breaking al subir versión de InVEST.
 12. **conda-lock** (win-64 / linux-64 / osx-arm64) + imagen Docker (Linux, sin
@@ -531,9 +583,16 @@ receta que el LLM sigue y adapta.
   + `op=raster_classes` en `prep.py` + `spec_translate.table_arg_specs`. Una fila
   por `lucode`, columnas del MODEL_SPEC, expande `[MONTH]`/`[SOIL_GROUP]`, leyenda
   opcional. Verificado end-to-end (ver §5).
-- `[resource]` base de coeficientes citados por clase de cobertura y región.
+- ~~`[resource]` base de coeficientes citados por clase de cobertura y región.~~
+  **HECHO** (2026-08-31) — `knowledge/coefficients/` (`usle_c`, `usle_p`,
+  `ndr_nutrient`, `curve_number`, `kc`, `root_depth`, `carbon_pools`) +
+  `sources.json` (bibliografía verificada) + `README.md` + profile
+  `moorabool_fs28`. Resources `invest://coefficients` + `.../{name}`. Registros
+  indexados por atributos semánticos de cobertura, no por una leyenda; crosswalk
+  solo orientativo; cada valor con `source_key`+`confidence`+`verified`.
+  Verificado (11 tests). Pendiente: cobertura de más regiones/biomas, glosario.
 - `[tool]` `check_table_vs_raster` — toda clase del ráster tiene fila, sin
-  huérfanas, rangos con sentido.
+  huérfanas, rangos con sentido (ahora cruzable contra la base de coeficientes).
 
 **Elegir modelo / integración Workbench**
 - `[prompt]` `recommend_model` — de la pregunta del usuario a modelo(s) + datos que

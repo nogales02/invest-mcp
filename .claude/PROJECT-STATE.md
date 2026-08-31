@@ -1,15 +1,30 @@
-# invest-mcp — curated project-state snapshot (2026-08-30, rev 4)
+# invest-mcp — curated project-state snapshot (2026-08-31, rev 5)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
 distilled state.
 
-## ⟳ RESUME POINT (2026-08-30, later) — read this first
+## ⟳ RESUME POINT (2026-08-31) — read this first
 
-Two long sessions: the **data-preparation layer** (roadmap 8–10) then the
+Latest session: the **cited-coefficient knowledge base** (`[resource]`, roadmap
+item 10) — `src/invest_mcp/knowledge/coefficients/`, 7 parameter files
+(`usle_c`, `usle_p`, `ndr_nutrient`, `curve_number`, `kc`, `root_depth`,
+`carbon_pools`) + `sources.json` (verified bibliography) + `README.md` + a
+worked `moorabool_fs28` profile. Built mostly by working through
+`FS28-Moorabool_MasterFile.xlsx` sheet by sheet; `root_depth` + `carbon_pools`
+from standard refs (Canadell 1996, Schenk & Jackson 2002, FAO-56, IPCC
+2006/2019 Vol 4, Ruesch & Gibbs 2008). Records are **legend-agnostic** — keyed
+by semantic cover attributes (form, canopy density, condition, management,
+biome, region, scale), not one land-cover legend; `crosswalk` hints advisory
+only; every value carries `source_key` + `confidence` + `verified`
+(`web`/`excel`/`standard`). Pure-stdlib loader `knowledge/coefficients.py`; two
+new resources (`invest://coefficients`, `invest://coefficients/{name}`); 11 new
+tests. **Not committed.**
+
+Prior two long sessions: the **data-preparation layer** (roadmap 8–10) then the
 **Workbench hand-off** + hydrography + a soil refinement. Now **32 MCP tools +
-4 resources + 2 prompts, 141 tests green** (6 skip — numpy helpers absent from
-`.venv`, verified in `invest-geo`).
+6 resources + 2 prompts, 152 tests green** (146 pass + 6 skip — numpy helpers
+absent from `.venv`, verified in `invest-geo`).
 
 **The 11-branch stack is MERGED into `main`** (2026-08-30). `main` = `8a56650`
 (`origin/main`), 11 bottom-up merge commits (PRs #2, #12, #4, #5, #6, #7, #8, #1,
@@ -38,10 +53,11 @@ failed`) → `_read_bdticm` retries 4×. HydroSHEDS (`data.hydrosheds.org`) was
 fast & reliable but **blocks HEAD** → `CPL_VSIL_CURL_USE_HEAD=NO`. Not code
 bugs; retry a hung `fetch_*` (worker timeout 1800 s).
 
-**Next candidates** (CLAUDE.md §6): `fetch_soil` PAWC (SoilGrids 2017
-`AWCh1..3`/`WWP`), HSG refined with Ksat/depth; `fetch_climate`
-`source=terraclimate|chirps`; a cited-coefficient `[resource]` to fill
-`tables_from_template` skeletons; `clone_job`; `build_report`;
+**Next candidates** (CLAUDE.md §6): extend the coefficient KB (NDR
+`eff`/`crit_len` outside semi-arid tropics, C/P for more regions, per-output
+units, glossary) + `check_table_vs_raster` `[tool]` against it; `fetch_soil`
+PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`), HSG refined with Ksat/depth;
+`fetch_climate` `source=terraclimate|chirps`; `clone_job`; `build_report`;
 `recommend_model` `[prompt]`.
 
 ## What the project is
@@ -97,7 +113,7 @@ SDK: `mcp` 2.x — `FastMCP` was renamed to `MCPServer`
   writes a numpy JSON first and renders the image in a separate process that can
   crash without taking the run down. Images render fine on Workbench/CI/Linux.
 
-## Tool surface — 32 MCP tools (+ 4 resources, 2 prompts)
+## Tool surface — 32 MCP tools (+ 6 resources, 2 prompts)
 
 Env/discovery: `invest_env`, `allow_input_dir`.
 Model introspection: `list_invest_models`, `describe_invest_model`,
@@ -118,8 +134,20 @@ Calibration: `validate_calibration_config`, `run_calibration`,
 `get_calibration_job`, `cancel_calibration_job`.
 
 Resources: `invest://models`, `invest://model/{id}/cheatsheet`,
-`invest://conventions`, `invest://data-sources`.
+`invest://conventions`, `invest://data-sources`, `invest://coefficients`
+(cited-coefficient KB index), `invest://coefficients/{name}` (one parameter file
+/ `sources` / `readme` / a worked profile).
 Prompts: `prepare_and_run_model`, `compare_land_use_scenarios`.
+
+Reference data (not a tool): `src/invest_mcp/knowledge/coefficients/` — served
+by the two `invest://coefficients` resources via the stdlib loader
+`knowledge/coefficients.py`. Seven parameter JSONs (`usle_c`, `usle_p`,
+`ndr_nutrient`, `curve_number`, `kc`, `root_depth`, `carbon_pools`),
+`sources.json` (bibliography: per source citation/doi/url/type/scope/provides/
+context/verified), `README.md` (how to choose a value; why not keyed to a
+legend), `profiles/moorabool_fs28.json` (the worked FS28 Moorabool
+parameterization — explicitly NOT a set of defaults). Legend-agnostic records:
+keyed by cover semantics, advisory-only `crosswalk`, every value cited.
 
 Data-prep design guardrail (agreed this session): the MCP is the capability
 surface; planning / judgement / LLM-in-the-loop stays in the client. Every tool
@@ -234,9 +262,20 @@ documents conditionals in the description.
     guesses each file's role by name, matches against each model's required file
     inputs → ready / gaps per model. Name-based & best-effort by design.
   - 4 MCP resources + 2 prompts wired into `build_server()`.
-- 141 tests green (6 skipped: numpy helpers — `_ra_mm_per_day`, USDA texture
-  triangle, EPIC K — with numpy absent from `.venv`; verified in `invest-geo`).
-  Registered and "Connected" in Claude Code as `invest`.
+- **Cited-coefficient knowledge base** (2026-08-31) — `knowledge/coefficients/`
+  (7 parameter JSONs + `sources.json` + `README.md` + `moorabool_fs28` profile),
+  pure-stdlib loader `knowledge/coefficients.py`, two `invest://coefficients`
+  resources. 11 tests: every file parses + has core keys; every `source_key`
+  used (incl. the profile's `sources_used`) is defined in `sources.json`; every
+  bibliography entry carries `context`+`verified`+`scope`; physical sanity
+  (C ∈ [0,1]; CN ordered A≤B≤C≤D, ∈ (0,100]; eff / proportion_subsurface_n
+  ∈ [0,1]); `index()` lists all 7 with record_count>0; `resources.register`
+  wires both URIs; `coefficients_entry("bogus")` returns error JSON with the
+  `known` list (does not raise). `pyproject.toml` ships the files as
+  package-data.
+- 152 tests green (146 pass + 6 skipped: numpy helpers — `_ra_mm_per_day`, USDA
+  texture triangle, EPIC K — with numpy absent from `.venv`; verified in
+  `invest-geo`). Registered and "Connected" in Claude Code as `invest`.
 
 ## Calibration engine — shared core
 
@@ -283,6 +322,9 @@ clip/align/delineate_watersheds/tables_from_template); 4 MCP resources + 2
 prompts. **Rev 3→4:** `fetch_hydrography` (#30, HydroSHEDS rivers/basins);
 `import_datastack`/`export_datastack` (#31–32, Workbench `.invest.json`
 round-trip); `fetch_soil` `variable=depth_to_bedrock` (SoilGrids 2017 BDTICM).
+**Rev 4→5:** cited-coefficient knowledge base (`knowledge/coefficients/`, 7
+parameters + bibliography + Moorabool profile, two `invest://coefficients`
+resources) — roadmap item 2 below now largely done.
 
 **Still open** (CLAUDE.md §6 has the full tagged list):
 1. More `fetch_*`: `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) +
@@ -290,8 +332,9 @@ round-trip); `fetch_soil` `variable=depth_to_bedrock` (SoilGrids 2017 BDTICM).
    `fetch_climate` `source=terraclimate` (real years, netCDF) / `chirps`
    (tropics); `fetch_dem` `source=srtm|nasadem` (Earthdata token);
    `fetch_hydrography` HydroBASINS lakes / nested subwatersheds.
-2. `[resource]` cited-coefficient knowledge base to fill `tables_from_template`
-   skeletons (per land-cover class / region, with sources).
+2. Extend the cited-coefficient KB: NDR `eff`/`crit_len` outside semi-arid
+   tropics, USLE C/P for more regions/biomes, per-output units, a glossary;
+   `check_table_vs_raster` `[tool]` cross-checking a filled table against it.
 3. `clone_job` (copy a finished run's args, re-run with edits — feeds
    `compare_scenarios`); datastack "archive" (`.invest.tar.gz`).
 4. Output side: `compare_scenarios_multi`, `aggregate_to_units`, `build_report`

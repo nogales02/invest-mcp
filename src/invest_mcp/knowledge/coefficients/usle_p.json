@@ -1,0 +1,96 @@
+{
+  "$schema_version": "1.0",
+  "parameter": "usle_p",
+  "aka": ["support-practice factor", "P factor", "conservation-practice factor"],
+  "models": ["sdr"],
+  "invest_arg": "biophysical_table_path",
+  "invest_column": "usle_p",
+  "units": "dimensionless (0-1)",
+  "definition": "Ratio of soil loss with a support practice (contouring, strip cropping, terracing) to loss with straight-row up-and-down-slope tillage. P = 1 means no support practice.",
+  "typical_range": [0.1, 1.0],
+  "how_to_estimate": {
+    "summary": "Default to P = 1 everywhere unless you can map a specific support practice. Where a practice is known, use a slope-dependent value from Wischmeier & Smith (1978) / Renard et al. (1997), or a meta-analytic mean from Xiong et al. (2019). Terraces also change the LS factor (shorter effective slope length) - P alone understates their effect.",
+    "methods": [
+      {"name": "P = 1 (no practice)", "when": "default; most InVEST SDR applications", "notes": "Set all classes to 1 and put land-cover effects entirely in usle_c. FS28 did this."},
+      {"name": "slope-class lookup", "source_key": "wischmeier1978", "notes": "Contouring: 0.60 (1-2% slope), 0.50 (3-8%), rising to 0.90 (21-25%)."},
+      {"name": "practice meta-analysis mean", "source_key": "xiong2019", "notes": "Contour 0.52+/-0.24, strip crop 0.49+/-0.28, terrace 0.28+/-0.18."}
+    ]
+  },
+  "how_to_choose": "P is the noisiest RUSLE factor and the hardest to map. If you cannot delineate where contouring / terracing actually occurs, keep P = 1 and do not try to bury a land-cover signal in it. For BMP or restoration scenarios, prefer to represent the change through usle_c (cover/residue) and, for terraces, through the DEM / LS. Record slope basis and source for any P < 1.",
+  "records": [
+    {
+      "id": "usle_p/no-practice/default/any",
+      "cover": {"form": "any", "label_source": "all classes", "management": "no mapped support practice"},
+      "value": 1.0, "range": null,
+      "context": {"biome": "any", "region": "any", "spatial_scale": "any", "erosion_model": "USLE/RUSLE", "derivation": "a-priori", "study_area": "InVEST SDR standard practice"},
+      "source_key": "wischmeier1978", "confidence": "high",
+      "caveats": "This is what FS28 used for every land-cover class. All management effect went into usle_c.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', crosswalk table (P factor column = 1, 'a-priori assumption')"
+    },
+    {
+      "id": "usle_p/contour-farming/by-slope/us/wischmeier1978",
+      "cover": {"form": "cropland", "label_source": "contour farming", "management": "tillage on the contour"},
+      "value": 0.5, "range": [0.5, 0.9],
+      "by_source": {
+        "slope_1_2pct": "0.60",
+        "slope_3_8pct": "0.50",
+        "slope_9_12pct": "0.60",
+        "slope_13_16pct": "0.70",
+        "slope_17_20pct": "0.80",
+        "slope_21_25pct": "0.90"
+      },
+      "context": {"biome": "temperate", "region": "United States (USLE reference)", "spatial_scale": "field / slope segment", "erosion_model": "USLE", "derivation": "empirical by slope class", "study_area": "USDA conservation-planning handbook"},
+      "source_key": "wischmeier1978", "confidence": "high",
+      "caveats": "Most effective on 2-10% slopes and 30-120 m slope lengths; effectiveness collapses on steeper ground and long slopes.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Methodological decisions' (P narrative)"
+    },
+    {
+      "id": "usle_p/strip-cropping/by-slope/us/renard1997",
+      "cover": {"form": "cropland", "label_source": "strip cropping / buffer strips", "management": "alternating strips of row crop and sod/close-grown crop on the contour"},
+      "value": 0.3, "range": [0.25, 0.35],
+      "context": {"biome": "temperate", "region": "United States (RUSLE reference)", "spatial_scale": "field", "erosion_model": "RUSLE", "derivation": "~half the contour-only P for the same slope", "study_area": "USDA RUSLE handbook"},
+      "source_key": "renard1997", "confidence": "high",
+      "caveats": "0.25-0.35 on 3-8% slopes. Grass buffer strips (cheaper, with riparian co-benefits) reach ~52-59% erosion reduction vs ~65% for formal strip cropping (Rajbanshi & Bhattacharya 2023).",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Methodological decisions' (P narrative)"
+    },
+    {
+      "id": "usle_p/terraces/by-slope/us/renard1997",
+      "cover": {"form": "cropland", "label_source": "terraces", "management": "graded or level bench terraces"},
+      "value": 0.2, "range": [0.1, 0.3],
+      "context": {"biome": "temperate", "region": "United States (RUSLE); meta-analysis in China", "spatial_scale": "field / hillslope", "erosion_model": "RUSLE", "derivation": "~half the strip-cropping P; LS recomputed on inter-terrace spacing", "study_area": "USDA RUSLE handbook; Chen, Wei & Chen 2017 meta-analysis (83 field studies)"},
+      "source_key": "renard1997", "confidence": "medium",
+      "caveats": "P 0.10-0.30 AND LS reduced 50-70% by the shorter effective slope length. Combined P+LS reduction 70-90% on moderate slopes; Chen et al. 2017 report mean runoff -50%, soil loss -67%. Do not represent terraces with P alone.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', 'Methodological decisions' (P narrative)"
+    },
+    {
+      "id": "usle_p/practice-means/global-meta/xiong2019",
+      "cover": {"form": "cropland", "label_source": "support practice (global meta-analysis mean)"},
+      "value": null, "range": [0.28, 0.52],
+      "by_source": {
+        "contour_tillage": "0.52 +/- 0.24",
+        "strip_cropping": "0.49 +/- 0.28",
+        "terraces": "0.28 +/- 0.18"
+      },
+      "context": {"biome": "global", "region": "global (155 studies)", "spatial_scale": "plot to field", "erosion_model": "USLE-based", "derivation": "first global meta-analysis of RUSLE P", "study_area": "global support-practice review"},
+      "source_key": "xiong2019", "confidence": "medium",
+      "caveats": "Variability of P exceeds that of every other RUSLE factor and depends on implementation quality; treat the +/- as real.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', table 'Xiong, Sun & Chen (2019)'"
+    },
+    {
+      "id": "usle_p/mixed-land-use/global/yang2003",
+      "cover": {"form": "mixed", "label_source": "coarse land-cover class", "management": "implicit"},
+      "value": null, "range": [0.5, 1.0],
+      "by_source": {
+        "cropland": "0.5",
+        "paddy_field": "0.5",
+        "mixed_forest_and_cropland": "0.8",
+        "mixed_grassland_and_cropland": "0.8",
+        "forest_grassland_shrubland_bare_water_urban_wetland_snow": "1.0"
+      },
+      "context": {"biome": "not differentiated", "region": "global", "spatial_scale": "0.5-degree grid", "erosion_model": "USLE", "derivation": "P bundled into coarse land-cover class (a modelling shortcut, not a mapped practice)", "study_area": "global potential soil erosion"},
+      "source_key": "yang2003", "confidence": "low",
+      "caveats": "Yang et al. (2003) used P as a second land-cover knob rather than a support-practice map. Only reuse this if you are deliberately following that convention; otherwise keep P = 1 and handle land cover in usle_c.",
+      "provenance": "FS28 masterfile, sheet 'SDR Params', table 'Yang et al. (2003)' (P factor column)"
+    }
+  ]
+}

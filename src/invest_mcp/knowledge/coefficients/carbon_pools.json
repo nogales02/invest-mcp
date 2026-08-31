@@ -1,0 +1,125 @@
+{
+  "$schema_version": "1.0",
+  "parameter": "carbon_pools",
+  "aka": ["carbon densities", "carbon storage by pool"],
+  "models": ["carbon"],
+  "invest_arg": "carbon_pools_path",
+  "invest_column": ["c_above", "c_below", "c_soil", "c_dead"],
+  "units": "Mg C / ha (metric tonnes of carbon per hectare); NOT tonnes of biomass and NOT CO2e",
+  "definition": "Carbon stored per hectare in each of four pools for a land-cover class: c_above = aboveground live biomass, c_below = belowground live biomass (roots), c_soil = soil organic carbon (to a stated depth, commonly 0-30 cm), c_dead = dead organic matter (litter + standing/downed deadwood). InVEST Carbon multiplies these by class area; sequestration is the difference between two LULC maps.",
+  "typical_range": {"c_above": [0, 180], "c_below": [0, 60], "c_soil": [10, 130], "c_dead": [0, 20]},
+  "how_to_estimate": {
+    "summary": "Best: local forest-inventory / soil-survey data. Tier 1: IPCC default biomass by climate domain and forest type x 0.47 carbon fraction for c_above; a root-to-shoot ratio for c_below; an IPCC reference soil organic carbon stock modified by land-use / management / input factors for c_soil; an IPCC dead-organic-matter default for c_dead. Or use a ready spatial product (Ruesch & Gibbs 2008) for the biomass pools.",
+    "steps": [
+      "c_above = (IPCC default aboveground biomass, t d.m./ha for your climate domain + forest type or non-forest class) x 0.47",
+      "c_below = c_above x (root-to-shoot ratio R for that vegetation type)  [grassland R can exceed 1]",
+      "c_soil = (IPCC reference SOC stock 0-30 cm for climate x soil type) x F_landuse x F_management x F_input   [F = 1 for native vegetation]",
+      "c_dead = IPCC Tier-1 dead-organic-matter default (litter + deadwood); often 0 for cropland/grassland, 2-8 for forest, higher in boreal"
+    ],
+    "methods": [
+      {"name": "IPCC 2006 Tier-1 defaults", "source_key": "ipcc2006_v4", "notes": "Vol 4: Table 4.7 (AGB natural forest), 4.4 (R:S), 4.3 (carbon fraction 0.47), 2.3 (reference SOC), 5.5 & 6.2 (stock-change factors)."},
+      {"name": "IPCC 2019 refinement", "source_key": "ipcc2019_v4", "notes": "Updated, more disaggregated biomass and SOC tables with uncertainty. Prefer where a matching row exists."},
+      {"name": "spatial Tier-1 biomass map", "source_key": "ruesch2008", "notes": "Global c_above + c_below by land cover x ecofloristic zone x continent; lets carbon vary in space without a hand table."}
+    ]
+  },
+  "how_to_choose": "Fix the climate domain (tropical / subtropical / warm-temperate / cool-temperate / boreal) and moisture regime for your study area first - it drives every pool. Then match forest type (broadleaf/needleleaf, moist/dry, primary/secondary/plantation) and, for c_soil, the dominant soil type and land-use history. State the SOC depth you used (InVEST is indifferent but comparisons must match). All values below are Tier-1 order-of-magnitude with wide uncertainty (IPCC reports +/- 30-75%); treat as starting points, refine with any local inventory. Carbon fraction 0.47 unless a local value is known.",
+  "records": [
+    {
+      "id": "carbon/forest/tropical-moist-primary/tier1/ipcc",
+      "cover": {"form": "forest", "label_source": "Tropical moist/wet forest, primary", "canopy_density": "closed", "condition": "primary / old-growth"},
+      "values": {"c_above": 130, "c_below": 30, "c_soil": 50, "c_dead": 5},
+      "ranges": {"c_above": [95, 165], "c_below": [23, 60], "c_soil": [39, 65], "c_dead": [2, 10]},
+      "context": {"climate_domain": "tropical, moist/wet", "region": "global Tier-1 (varies by continent - Africa highest AGB, America/Asia lower)", "soil_depth_for_c_soil": "0-30 cm", "study_area": "IPCC Vol 4 Tables 4.7, 4.4, 2.3", "assumptions": "AGB ~275 t d.m./ha x 0.47; R:S 0.24-0.37; SOC LAC/HAC tropical moist"},
+      "source_key": "ipcc2006_v4", "confidence": "low",
+      "caveats": "Continental spread is large. Secondary / logged tropical forest c_above is 30-60% of this. Use the 2019 refinement or a regional biomass map if available.",
+      "provenance": "standard reference (added; not in FS28 masterfile)"
+    },
+    {
+      "id": "carbon/forest/tropical-dry/tier1/ipcc",
+      "cover": {"form": "forest", "label_source": "Tropical dry forest", "canopy_density": "open to closed", "condition": "natural"},
+      "values": {"c_above": 40, "c_below": 15, "c_soil": 37, "c_dead": 3},
+      "ranges": {"c_above": [33, 60], "c_below": [10, 25], "c_soil": [31, 38], "c_dead": [1, 6]},
+      "context": {"climate_domain": "tropical, dry", "region": "global Tier-1", "soil_depth_for_c_soil": "0-30 cm", "study_area": "IPCC Vol 4 Tables 4.7, 4.4, 2.3", "assumptions": "AGB ~85 t d.m./ha x 0.47; R:S 0.28-0.56"},
+      "source_key": "ipcc2006_v4", "confidence": "low",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "carbon/forest/warm-temperate-broadleaf/tier1/ipcc",
+      "cover": {"form": "forest", "label_source": "Warm-temperate / Mediterranean broadleaf forest (incl. eucalypt)", "canopy_density": "closed", "condition": "natural / mature"},
+      "values": {"c_above": 65, "c_below": 16, "c_soil": 80, "c_dead": 5},
+      "ranges": {"c_above": [45, 100], "c_below": [11, 25], "c_soil": [50, 95], "c_dead": [2, 12]},
+      "context": {"climate_domain": "warm temperate, moist", "region": "global Tier-1 (SE Australian temperate eucalypt forest fits here)", "soil_depth_for_c_soil": "0-30 cm", "study_area": "IPCC Vol 4 Tables 4.7, 4.4, 2.3", "assumptions": "AGB ~140 t d.m./ha x 0.47; R:S 0.24; SOC temperate moist HAC/LAC"},
+      "source_key": "ipcc2006_v4", "confidence": "low",
+      "caveats": "Australian tall wet eucalypt forest can far exceed this (c_above 150-300); dry sclerophyll is lower (30-60). Use FullCAM / NCAS for Australian work.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "carbon/forest/cool-temperate-conifer/tier1/ipcc",
+      "cover": {"form": "forest", "label_source": "Cool-temperate coniferous forest / plantation", "canopy_density": "closed"},
+      "values": {"c_above": 60, "c_below": 17, "c_soil": 90, "c_dead": 8},
+      "ranges": {"c_above": [35, 90], "c_below": [10, 26], "c_soil": [70, 120], "c_dead": [4, 20]},
+      "context": {"climate_domain": "cool temperate, moist", "region": "global Tier-1", "soil_depth_for_c_soil": "0-30 cm", "study_area": "IPCC Vol 4 Tables 4.7, 4.4, 2.3", "assumptions": "AGB ~130 t d.m./ha x 0.47; R:S 0.29 (conifer); higher litter accumulation"},
+      "source_key": "ipcc2006_v4", "confidence": "low",
+      "caveats": "Managed Pinus radiata plantation c_above swings 10-120 with rotation age; use a rotation-average or stand-age map if the model is sensitive.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "carbon/forest/boreal-coniferous/tier1/ipcc",
+      "cover": {"form": "forest", "label_source": "Boreal coniferous forest", "canopy_density": "closed to open"},
+      "values": {"c_above": 15, "c_below": 5, "c_soil": 90, "c_dead": 15},
+      "ranges": {"c_above": [7, 30], "c_below": [3, 12], "c_soil": [60, 130], "c_dead": [8, 40]},
+      "context": {"climate_domain": "boreal", "region": "global Tier-1", "soil_depth_for_c_soil": "0-30 cm (boreal soils hold much more in deeper peat / O horizons)", "study_area": "IPCC Vol 4 Tables 4.7, 4.4, 2.3", "assumptions": "AGB ~30 t d.m./ha x 0.47; R:S 0.24-0.39; large litter + soil pool"},
+      "source_key": "ipcc2006_v4", "confidence": "low",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "carbon/shrubland/temperate-mediterranean/tier1/ipcc",
+      "cover": {"form": "shrubland", "label_source": "Temperate / Mediterranean shrubland, heath, mallee scrub", "condition": "natural"},
+      "values": {"c_above": 12, "c_below": 8, "c_soil": 60, "c_dead": 2},
+      "ranges": {"c_above": [5, 25], "c_below": [3, 18], "c_soil": [35, 90], "c_dead": [1, 5]},
+      "context": {"climate_domain": "warm to cool temperate, dry-moist", "region": "global Tier-1", "soil_depth_for_c_soil": "0-30 cm", "study_area": "IPCC Vol 4 (shrubland / other wooded land); R:S high for woody shrubs"},
+      "source_key": "ipcc2006_v4", "confidence": "low",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "carbon/grassland/temperate/tier1/ipcc",
+      "cover": {"form": "grassland", "label_source": "Temperate grassland / perennial pasture", "condition": "moderate to good, grazed"},
+      "values": {"c_above": 3, "c_below": 8, "c_soil": 80, "c_dead": 0},
+      "ranges": {"c_above": [1, 7], "c_below": [3, 20], "c_soil": [40, 120], "c_dead": [0, 2]},
+      "context": {"climate_domain": "temperate", "region": "global Tier-1", "soil_depth_for_c_soil": "0-30 cm", "study_area": "IPCC Vol 4 Ch 6 (grassland); herbaceous R:S 1.5-4 so c_below > c_above", "assumptions": "peak standing AGB 2.1-6.1 t d.m./ha x 0.47; SOC ~ native reference (management factor ~1)"},
+      "source_key": "ipcc2006_v4", "confidence": "low",
+      "caveats": "Almost all grassland carbon is in the soil and roots. c_above is small and seasonal - many InVEST studies set it 1-3. Degradation lowers c_soil (management factor 0.7-0.95).",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "carbon/cropland/annual/tier1/ipcc",
+      "cover": {"form": "cropland", "label_source": "Annual cropland, long-term cultivated", "condition": "conventionally managed"},
+      "values": {"c_above": 3, "c_below": 1, "c_soil": 55, "c_dead": 0},
+      "ranges": {"c_above": [1, 8], "c_below": [0, 3], "c_soil": [30, 90], "c_dead": [0, 1]},
+      "context": {"climate_domain": "temperate (adjust for tropical: lower SOC)", "region": "global Tier-1", "soil_depth_for_c_soil": "0-30 cm", "study_area": "IPCC Vol 4 Ch 5; SOC = reference x F_LU(long-term cultivated ~0.69-0.80) x F_MG x F_I", "assumptions": "standing crop biomass is small and transient"},
+      "source_key": "ipcc2006_v4", "confidence": "low",
+      "caveats": "c_soil is the pool that changes under cropland conversion / BMPs: conventional-till long-term cropland ~0.7 x native SOC; no-till + residues raises F_MG toward 1.0-1.1. Perennial / tree crops carry more c_above (10-40).",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "carbon/wetland/vegetated/tier1/ipcc",
+      "cover": {"form": "wetland", "label_source": "Vegetated inland wetland (herbaceous, peat-forming where perennial)", "condition": "natural"},
+      "values": {"c_above": 5, "c_below": 6, "c_soil": 120, "c_dead": 2},
+      "ranges": {"c_above": [1, 15], "c_below": [2, 20], "c_soil": [60, 400], "c_dead": [0, 8]},
+      "context": {"climate_domain": "any", "region": "global Tier-1 (peatlands far higher)", "soil_depth_for_c_soil": "0-30 cm (deep peat holds vastly more)", "study_area": "IPCC 2013 Wetlands Supplement / Vol 4"},
+      "source_key": "ipcc2019_v4", "confidence": "low",
+      "caveats": "Wetland soil carbon is highly variable and depth-dependent; if peat is present the 0-30 cm figure badly understates the true stock. Use the IPCC Wetlands Supplement for drained/rewetted scenarios.",
+      "provenance": "standard reference (added)"
+    },
+    {
+      "id": "carbon/non-vegetated/bare-built-water/tier1",
+      "cover": {"form": "bare / built / water", "label_source": "Bare ground, sealed surfaces, open water"},
+      "values": {"c_above": 0, "c_below": 0, "c_soil": 10, "c_dead": 0},
+      "ranges": {"c_above": [0, 1], "c_below": [0, 0], "c_soil": [0, 30], "c_dead": [0, 0]},
+      "context": {"climate_domain": "n/a", "region": "n/a", "soil_depth_for_c_soil": "0-30 cm", "study_area": "convention"},
+      "source_key": "ipcc2006_v4", "confidence": "medium",
+      "caveats": "Settlement soil still holds some carbon (green space, sealed-over former soil); IPCC settlement SOC often kept near reference x 0.8. Water = 0 in all pools.",
+      "provenance": "standard reference (added)"
+    }
+  ]
+}
