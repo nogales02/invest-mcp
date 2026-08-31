@@ -398,10 +398,16 @@ def list_invest_job_artifacts(job_id: str) -> dict[str, Any]:
 
 def _read_invest_summary_csv(workspace: str) -> list[dict] | None:
     """InVEST writes a `raster_values_summary.csv` (label/total/units/filename)
-    for several models -- surface it verbatim alongside our own stats."""
-    p = Path(workspace) / "raster_values_summary.csv"
+    for several models -- surface it verbatim alongside our own stats. With a
+    `results_suffix` the file is `raster_values_summary_<suffix>.csv`, so fall
+    back to the suffixed form."""
+    ws = Path(workspace)
+    p = ws / "raster_values_summary.csv"
     if not p.is_file():
-        return None
+        cands = sorted(ws.glob("raster_values_summary*.csv"))
+        if not cands:
+            return None
+        p = cands[0]
     import csv
 
     try:
@@ -610,6 +616,9 @@ def compare_scenarios(baseline_job_id: str, scenario_job_id: str,
     diverging-colormap PNG preview of the main diff. Writes a `compare.json`
     sidecar. Needs the `invest-geo` conda env.
 
+    Output rasters are matched on their spec name after removing each run's own
+    `results_suffix`, so the two jobs may carry different suffixes.
+
     `baseline_job_id` / `scenario_job_id`: two succeeded `run_invest_model`
       jobs of the same model (e.g. the model run with two different LULC maps).
     `aoi_path`: absolute path to a polygon vector under an allowed folder;
@@ -650,6 +659,11 @@ def compare_scenarios(baseline_job_id: str, scenario_job_id: str,
         spec = {}
     model_title = spec.get("model_title") or base.model_id
 
+    def _job_results_suffix(j) -> str:
+        ds = _load_json(j.datastack_path) or {}
+        s = (ds.get("args") or {}).get("results_suffix")
+        return str(s).strip() if s else ""
+
     try:
         cmp = geo_client.run_comparison(
             base.workspace, scen.workspace, spec, _SETTINGS,
@@ -658,6 +672,8 @@ def compare_scenarios(baseline_job_id: str, scenario_job_id: str,
             include_intermediate=bool(include_intermediate),
             rasters=rasters or None,
             make_preview=bool(make_preview),
+            baseline_suffix=_job_results_suffix(base),
+            scenario_suffix=_job_results_suffix(scen),
         )
     except RuntimeError as exc:
         return {"ok": False, "env_missing": True, "error": str(exc)}

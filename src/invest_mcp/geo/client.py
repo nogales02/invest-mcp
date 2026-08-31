@@ -207,6 +207,20 @@ def run_summary(
 # raster differencing + delta stats run in invest_mcp.geo.compare inside the
 # invest-geo env.
 # ---------------------------------------------------------------------------
+def _strip_results_suffix(rel: str, suffix: str) -> str:
+    """Drop a trailing ``_<suffix>`` from a relpath's filename stem -- InVEST
+    appends ``results_suffix`` to every output name (``c_storage_bas.tif`` ->
+    ``c_storage_bas_baseline.tif``). No-op when ``suffix`` is empty."""
+    if not suffix:
+        return rel
+    head, sep, name = rel.rpartition("/")
+    stem, dot, ext = name.partition(".")
+    tail = f"_{suffix}"
+    if stem.endswith(tail) and len(stem) > len(tail):
+        stem = stem[: -len(tail)]
+    return f"{head}{sep}{stem}{dot}{ext}"
+
+
 def plan_comparison(
     baseline_ws: str,
     scenario_ws: str,
@@ -214,9 +228,14 @@ def plan_comparison(
     *,
     include_intermediate: bool = False,
     explicit: list[str] | None = None,
+    baseline_suffix: str = "",
+    scenario_suffix: str = "",
 ) -> dict:
-    """Pair up output rasters that exist in *both* run workspaces (matched by
-    relative path), and list the ones present in only one."""
+    """Pair up output rasters that exist in *both* run workspaces, and list the
+    ones present in only one. Rasters are matched on their spec-relative path
+    *after* stripping each run's own ``results_suffix`` -- so a baseline and a
+    scenario saved with different suffixes still line up. The paired ``relpath``
+    is the suffix-free key (it names the ``diff_*`` output)."""
     base = {r["relpath"]: r for r in plan_rasters(
         baseline_ws, meta_by_relpath,
         include_intermediate=include_intermediate, explicit=explicit)}
@@ -224,24 +243,43 @@ def plan_comparison(
         scenario_ws, meta_by_relpath,
         include_intermediate=include_intermediate, explicit=explicit)}
 
-    pairs: list[dict] = []
+    base_by_key: dict[str, tuple[str, dict]] = {}
     for rel, brow in base.items():
-        srow = scen.get(rel)
-        if srow is None:
+        base_by_key[_strip_results_suffix(rel, baseline_suffix)] = (rel, brow)
+
+    pairs: list[dict] = []
+    matched_scen: set[str] = set()
+    for rel, srow in scen.items():
+        key = _strip_results_suffix(rel, scenario_suffix)
+        hit = base_by_key.get(key)
+        if hit is None:
             continue
-        meta = meta_by_relpath.get(rel, {})
+        brel, brow = hit
+        matched_scen.add(rel)
+        meta = meta_by_relpath.get(key) or meta_by_relpath.get(brel, {})
         pairs.append({
-            "relpath": rel,
+            "relpath": key,
+            "baseline_relpath": brel,
+            "scenario_relpath": rel,
             "label": meta.get("id") or brow.get("label"),
             "units": meta.get("units") or brow.get("units"),
             "about": meta.get("about") or brow.get("about"),
             "baseline_path": brow["path"],
             "scenario_path": srow["path"],
         })
+
+    spec_order = list(meta_by_relpath)
+    pairs.sort(key=lambda p: (
+        spec_order.index(p["relpath"]) if p["relpath"] in spec_order else 10_000,
+        p["relpath"]))
+
+    matched_keys = {p["relpath"] for p in pairs}
     return {
         "pairs": pairs,
-        "only_in_baseline": sorted(set(base) - set(scen)),
-        "only_in_scenario": sorted(set(scen) - set(base)),
+        "only_in_baseline": sorted(
+            rel for rel in base
+            if _strip_results_suffix(rel, baseline_suffix) not in matched_keys),
+        "only_in_scenario": sorted(set(scen) - matched_scen),
     }
 
 
@@ -257,6 +295,8 @@ def run_comparison(
     rasters: list[str] | None = None,
     make_preview: bool = True,
     max_zonal_features: int = 200,
+    baseline_suffix: str = "",
+    scenario_suffix: str = "",
 ) -> dict:
     """Difference a baseline run's outputs against an alternative-scenario run.
     Raises RuntimeError only if the invest-geo env itself is missing (callers
@@ -264,7 +304,9 @@ def run_comparison(
     meta = output_meta_map(model_spec)
     plan = plan_comparison(baseline_ws, scenario_ws, meta,
                            include_intermediate=include_intermediate,
-                           explicit=rasters)
+                           explicit=rasters,
+                           baseline_suffix=baseline_suffix,
+                           scenario_suffix=scenario_suffix)
     if not plan["pairs"]:
         return {"ok": True, "pairs": [], "aoi": None, "preview": None,
                 "only_in_baseline": plan["only_in_baseline"],
