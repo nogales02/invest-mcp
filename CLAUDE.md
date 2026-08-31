@@ -105,7 +105,7 @@ src/invest_mcp/
     sandbox.py       allow-list de rutas de entrada (resolve_input_path) + de salida (resolve_output_path) + allow_dir de sesión
     project.py       convención de "proyecto InVEST": scaffold del árbol + project.json (stdlib, corre en el server)
     readiness.py     escanea data/ + tables/, adivina rol por nombre, casa contra los inputs required de cada modelo (stdlib + spec_translate; puro)
-    biotable.py      tablas biofísicas (stdlib; puro): build_template (esqueleto: expande [MONTH]/[SOIL_GROUP], una fila por lucode, celdas en blanco) + parse_legend + check_table (valida una tabla RELLENA: cobertura vs clases del ráster, columnas required/inesperadas, celdas vacías/no-numéricas, invariantes duras + rangos típicos citados del KB; severity error|warning|ok)
+    biotable.py      tablas biofísicas (stdlib; puro): build_template (esqueleto: expande [MONTH]/[SOIL_GROUP], una fila por lucode, celdas en blanco) + parse_legend + check_table (valida una tabla RELLENA: cobertura vs clases del ráster, columnas required/inesperadas, celdas vacías/no-numéricas, invariantes duras + rangos típicos citados del KB; severity error|warning|ok). Ambas aceptan `conditions` ({cond: bool}) → columna condicional con cond True = required dura, False = descartada, ausente = advisory; `_requirement_label` es el helper compartido. check_table devuelve `enforced_conditions`
     datastack.py     lee/escribe el parameter set `.invest.json` del Workbench ({args, model_id, invest_version}); tolera `model_name` legacy; relativize/absolutize de rutas (stdlib; puro) — punto de integración con el Workbench
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
     report.py        render(payload) → memo markdown de métodos + resultados (overview, params, provenance con sha256, outputs, results desde summary.json, figuras, sección de comparación) — stdlib puro, solo colaciona y formatea. Lo usa la tool build_report
@@ -126,7 +126,7 @@ src/invest_mcp/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 36 tools MCP + register(server); helpers `_choose_table_arg` (tables_from_template / check_table_vs_raster), `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff), `_aggregate_raster_specs` (aggregate_to_units: normaliza el arg `rasters` = path | dict | lista → specs con label slug+dedup + value_per_unit por ráster con default global), `_load_json`
+  tools.py           las 36 tools MCP + register(server); helpers `_choose_table_arg` + `_table_conditions` (tables_from_template / check_table_vs_raster: `_table_conditions` resuelve `{cond: bool}` de las columnas condicionales contra el dict `args` que se pasa, solo para las condiciones nombradas como clave en `args` — H3: NDR `calc_n`/`calc_p` → exige/descarta `load_type_n`/`load_type_p` etc.), `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff), `_aggregate_raster_specs` (aggregate_to_units: normaliza el arg `rasters` = path | dict | lista → specs con label slug+dedup + value_per_unit por ráster con default global), `_load_json`
   resources.py       7 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, guía de modelos = qué modelo responde a qué pregunta, base de coeficientes citados + sus ficheros) + register(server)
   prompts.py         4 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table, recommend_model) + register(server)
   knowledge/
@@ -158,7 +158,7 @@ tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_datastack, test_knowledge_coefficients,
                      test_check_table, test_clone_job, test_report,
                      test_aggregate
-                     (209 tests: 203 pass + 6 skip sin numpy)
+                     (220 tests: 214 pass + 6 skip sin numpy)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/aggregate.py`,
@@ -208,8 +208,8 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `clip_to_aoi(src_path, dst_path, aoi_path, all_touched=False)` | Recorta un ráster (crop al bbox del AOI + máscara) o vector (`gpd.clip`) al polígono de `aoi_path`. El AOI se reproyecta al CRS de la capa. Necesita `invest-geo`. |
 | `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")` | Pone varios rásters en **una malla idéntica** (mismo CRS + tamaño de píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`. Malla **o** desde `reference_path` (un ráster) **o** desde `target_crs`+`resolution`+`extent` juntos. `resampling` se aplica a todos (correr dos veces si mezcla categóricos y continuos). Necesita `invest-geo`. |
 | `delineate_watersheds(dem_path, outlets_path, dst_path, threshold_flow_accumulation=1000, snap_distance_px=10, fill_pits=True, keep_intermediate=False)` | Corta polígonos de cuenca aguas arriba de puntos de salida con la cadena D8 de **pygeoprocessing** (mismo motor que InVEST → las cuencas cuadran con el routing de SDR/NDR/SWY): fill_pits → flow_dir_d8 → flow_accum → streams (umbral en px) → snap de cada outlet a la red → `delineate_watersheds_d8`. Reproyecta los outlets al CRS del DEM. Escribe `.gpkg`/`.shp`/`.geojson`; intermedios en `<dst_stem>_hydro/` (se borran salvo `keep_intermediate`). `snap_distance_px=0` desactiva el snap. Devuelve descripción del vector + `snap_report` por punto. Necesita `invest-geo`. |
-| `tables_from_template(model_id, lulc_path, dst_path, table_arg="", legend_path="", include_optional=True, max_classes=1000)` | Esqueleto de tabla biofísica/lookup de un modelo: una fila por lucode único del LULC + las columnas que pide su MODEL_SPEC (celdas de coeficiente en blanco). `table_arg` = qué CSV templetar (auto-detecta el que va por `lucode`; si hay varios, el error los lista). `legend_path` (CSV `code,label`) → añade columna `description`. Expande `[MONTH]`→`_1..12` y `[SOIL_GROUP]`→`_a..d`; otros `[TOKEN]` quedan literales con nota. Devuelve `headers`, `column_help` (about/units/requirement por columna), `classes` (valor+px), `narrative`. Necesita `invest-geo` (lee las clases del ráster). |
-| `check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="", include_optional=True, max_classes=1000)` | Valida una tabla biofísica/lookup **rellena** antes de correr. `checks`: `coverage` (con `lulc_path`: clases del ráster sin fila = `missing_rows`; filas para códigos ausentes = `orphan_rows`; claves duplicadas), `columns` (`missing` required, `unexpected` extras — solo se validan celdas de columnas que el modelo consume), `cells` (`empty_required`, `non_numeric`), `ranges` (`invariant_violations` duras: fracciones ∈ [0,1], curve numbers ordenados A≤B≤C≤D ∈ (0,100], loads/depths ≥ 0, root_depth entero · `out_of_typical` blandas: fuera de la banda citada del KB, con el `resource` fuente). `severity` = `error` (bloqueante) \| `warning` (revisar) \| `ok`; `pass` = `severity != error`. `lulc_path` opcional (sin él: solo estructura + valores, no necesita `invest-geo`). Cierra `tables_from_template` → rellenar desde `invest://coefficients` → `check_table_vs_raster` → `validate_invest_args`. |
+| `tables_from_template(model_id, lulc_path, dst_path, table_arg="", legend_path="", include_optional=True, args=None, max_classes=1000)` | Esqueleto de tabla biofísica/lookup de un modelo: una fila por lucode único del LULC + las columnas que pide su MODEL_SPEC (celdas de coeficiente en blanco). `table_arg` = qué CSV templetar (auto-detecta el que va por `lucode`; si hay varios, el error los lista). `legend_path` (CSV `code,label`) → añade columna `description`. `args` (el dict `args` del run) resuelve las columnas **condicionales**: `{"calc_n": true, "calc_p": false}` → emite `load_type_n`/`load_n`/… como `required` y descarta las de fósforo; sin `args` todas salen `required if: <cond>`. Expande `[MONTH]`→`_1..12` y `[SOIL_GROUP]`→`_a..d`; otros `[TOKEN]` quedan literales con nota. Devuelve `headers`, `column_help` (about/units/requirement por columna), `classes` (valor+px), `resolved_conditions`, `narrative`. Necesita `invest-geo` (lee las clases del ráster). |
+| `check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="", include_optional=True, args=None, max_classes=1000)` | Valida una tabla biofísica/lookup **rellena** antes de correr. `checks`: `coverage` (con `lulc_path`: clases del ráster sin fila = `missing_rows`; filas para códigos ausentes = `orphan_rows`; claves duplicadas), `columns` (`missing` required, `unexpected` extras — solo se validan celdas de columnas que el modelo consume), `cells` (`empty_required`, `non_numeric`), `ranges` (`invariant_violations` duras: fracciones ∈ [0,1], curve numbers ordenados A≤B≤C≤D ∈ (0,100], loads/depths ≥ 0, root_depth entero · `out_of_typical` blandas: fuera de la banda citada del KB, con el `resource` fuente). `args` (el dict `args` del run) resuelve las columnas condicionales: con `{"calc_n": true}` `load_type_n`/`load_n`/`eff_n`/`crit_len_n`/`proportion_subsurface_n` pasan a required duras (faltan → `missing`, en blanco → `empty_required`); con `{"calc_p": false}` las de fósforo se ignoran; condiciones no nombradas quedan en `conditional_columns`. `enforced_conditions` lista las activadas. `severity` = `error` (bloqueante) \| `warning` (revisar) \| `ok`; `pass` = `severity != error`. `lulc_path` opcional (sin él: solo estructura + valores, no necesita `invest-geo`). Cierra `tables_from_template` → rellenar desde `invest://coefficients` → `check_table_vs_raster` → `validate_invest_args`. |
 | `import_datastack(src_path)` | Lee un **datastack** `.invest.json` (parameter set, p.ej. uno que guardó el Workbench) y reporta qué trae: modelo, `args`, `required_missing`, por cada ruta si existe en disco y si cae dentro del sandbox, `ready`. Resuelve rutas relativas contra la carpeta del datastack. Enchufa directo con `validate_invest_args` → `run_invest_model`. stdlib puro, no necesita `invest-geo`. |
 | `export_datastack(dst_path, model_id="", args=None, job_id="", relative=False)` | Escribe un **datastack** `.invest.json` (`{args, model_id, invest_version}`) que el Workbench abre directamente — el punto de hand-off con el Workbench. Da `model_id`+`args`, o `job_id` para sacar modelo+args de un run terminado. `relative=True` reescribe las rutas de fichero relativas a `dst_path` (stack portable). Chequea las rutas contra el sandbox y reporta su existencia sin bloquear. stdlib puro. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
@@ -275,10 +275,26 @@ Convenciones:
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
 8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
 `Dummy_InVEST` o un bbox de los Alpes.
-**36 tools + 7 resources + 4 prompts. 209 tests en verde** (`pytest -q`, 203
+**36 tools + 7 resources + 4 prompts. 220 tests en verde** (`pytest -q`, 214
 pass + 6 skip sin numpy).
 
-**Última sesión (2026-08-31, cont.):** `aggregate_to_units` `[tool]` +
+**Última sesión (2026-08-31, cont.) — H3:** `tables_from_template` y
+`check_table_vs_raster` toman un `args` opcional (el dict `args` del run) y
+resuelven las columnas **condicionales** del MODEL_SPEC contra él vía el helper
+`_table_conditions`. Motivación: la suite test vio que una tabla biofísica de
+NDR sin `load_type_n`/`load_type_p` pasaba `check_table_vs_raster` como `ok` y
+luego `validate_invest_args`/el run fallaban. Ahora con `args={"calc_n": true,
+"calc_p": false}` el template emite `load_type_n`/`load_n`/… como `required` y
+descarta las de fósforo; el checker las exige (faltan → `missing`, en blanco →
+`empty_required`) y descarta las de la rama off (ni required ni `unexpected`).
+Sin `args` el comportamiento es el de antes (todas advisory). Núcleo puro en
+`biotable._requirement_label` + `conditions` en `build_template`/`check_table`
+(devuelve `enforced_conditions`). Verificado contra el MODEL_SPEC real de NDR.
++7 tests (`test_biotable` +2, `test_check_table` +5). Limpieza del árbol:
+`.claude/settings.json` y `_suite_test/` a `.gitignore`, PROJECT-STATE rev 11
+commiteado (`15494ec`).
+
+**Sesión previa (2026-08-31, cont.):** `aggregate_to_units` `[tool]` +
 `geo/aggregate.py` (CORRE EN invest-geo) — roll-up zonal de rásters de servicio
 (o `diff_*.tif` de `compare_scenarios`) a polígonos de unidades
 (municipios/predios/intervención), con valoración $ simple (`val_<label>` =
@@ -605,8 +621,9 @@ regiones/biomas, glosario, unidades por output).
   labels, `value_per_unit` global vs override, errores) + payload building
   (`run_aggregate_to_units` stubeado) + guard rails del tool (rasters vacío,
   stat desconocido, sandbox in/out, `env_missing`, happy path con narrative).
-- 209 tests en verde (203 pass — + `test_aggregate` 15, `test_report` 12,
-  `test_clone_job` 10, `test_check_table` 17, `test_knowledge_coefficients` 11,
+- 220 tests en verde (214 pass — incl. +4 de PR #21 results_suffix y +7 de H3
+  [`test_check_table` 22, `test_biotable` +2 → 12]; `test_aggregate` 15,
+  `test_report` 12, `test_clone_job` 10, `test_knowledge_coefficients` 11,
   `test_hydrography` 16, `test_datastack` 15, +2 en `test_soil`; 6 skips: helpers numpy —
   `_ra_mm_per_day`, triángulo textural, EPIC K — con numpy ausente del `.venv`;
   se verifican en `invest-geo`). Registrado y "Connected" en Claude Code.

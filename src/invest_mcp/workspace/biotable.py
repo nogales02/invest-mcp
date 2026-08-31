@@ -37,6 +37,30 @@ def expand_column(col_id: str) -> tuple[list[str], str | None]:
     return [col_id], None
 
 
+def _requirement_label(
+    req: object, conditions: dict[str, bool] | None
+) -> str | None:
+    """The requirement tag for a column, given its spec ``required`` value and a
+    resolved-conditions map (``{condition: on/off}``). ``None`` means *drop this
+    column* -- a string condition explicitly resolved ``False``.
+
+    ``req`` is ``True`` (always required), ``False`` (optional) or a string (a
+    condition, e.g. NDR's ``"calc_n"``). With ``conditions`` a string condition
+    known ``True`` becomes a hard ``"required"``, known ``False`` drops the
+    column, and an unlisted condition stays ``"required if: <cond>"``.
+    """
+    if req is True:
+        return "required"
+    if req is False:
+        return "optional"
+    cond = conditions.get(req) if (conditions is not None and isinstance(req, str)) else None
+    if cond is True:
+        return "required"
+    if cond is False:
+        return None
+    return f"required if: {req}"
+
+
 def build_template(
     key_col: str,
     columns: list[dict],
@@ -44,12 +68,18 @@ def build_template(
     *,
     descriptions: dict[int, str] | None = None,
     include_optional: bool = True,
+    conditions: dict[str, bool] | None = None,
 ) -> dict:
     """Return ``{"csv", "headers", "column_help", "notes"}``.
 
     ``columns`` are the non-key column specs (``id``/``about``/``required``/
     ``units``). ``required`` is ``True`` (kept), ``False`` (kept only when
     ``include_optional``) or a string condition (always kept, flagged).
+
+    ``conditions`` (``{condition: bool}``, e.g. ``{"calc_n": True, "calc_p":
+    False}``) resolves those string conditions: a condition known ``True`` turns
+    its columns into hard ``required`` ones, known ``False`` drops them, and an
+    unlisted condition is left ``required if: <cond>`` as before.
     """
     headers = [key_col]
     column_help: dict[str, dict] = {}
@@ -63,14 +93,12 @@ def build_template(
         req = c["required"]
         if req is False and not include_optional:
             continue
+        requirement = _requirement_label(req, conditions)
+        if requirement is None:              # conditional branch resolved off
+            continue
         expanded, note = expand_column(cid)
         if note:
             notes.append(note)
-        requirement = (
-            "required" if req is True
-            else "optional" if req is False
-            else f"required if: {req}"
-        )
         for h in expanded:
             if h in seen:
                 continue
@@ -154,6 +182,7 @@ def check_table(
     raster_codes: list[int] | None = None,
     column_ranges: dict | None = None,
     include_optional: bool = True,
+    conditions: dict[str, bool] | None = None,
 ) -> dict:
     """Check a filled biophysical / lookup CSV against a model's column spec, the
     land-cover raster (optional) and the cited-coefficient typical ranges.
@@ -161,19 +190,30 @@ def check_table(
     ``columns`` are the non-key column specs from
     :func:`invest_mcp.models.spec_translate.table_arg_specs` (``[TOKEN]``
     placeholders still un-expanded). ``column_ranges`` is
-    :func:`invest_mcp.knowledge.coefficients.column_ranges` output. Returns
-    ``{"severity", "pass", "checks", ...}`` -- ``severity`` is ``error`` (a
-    blocker: missing rows/columns, empty required cell, non-numeric coefficient,
-    invariant broken), ``warning`` (orphan/duplicate rows, unexpected columns,
-    a value outside the cited literature band) or ``ok``.
+    :func:`invest_mcp.knowledge.coefficients.column_ranges` output.
+
+    ``conditions`` (``{condition: bool}``, e.g. ``{"calc_n": True}``) resolves
+    the models's string ``required`` conditions: a condition known ``True``
+    promotes its columns to hard-required (absent -> ``missing``, blank ->
+    ``empty_required``); known ``False`` means that branch is off, so the
+    columns are neither required nor flagged as unexpected; an unlisted
+    condition stays advisory (listed under ``conditional_columns``).
+
+    Returns ``{"severity", "pass", "checks", "enforced_conditions", ...}`` --
+    ``severity`` is ``error`` (a blocker: missing rows/columns, empty required
+    cell, non-numeric coefficient, invariant broken), ``warning``
+    (orphan/duplicate rows, unexpected columns, a value outside the cited
+    literature band) or ``ok``.
     """
     ranges = column_ranges or {}
+    conds = conditions or {}
     headers, rows = read_table(table_text)
     lc = {h.lower(): h for h in headers}
     key_hdr = lc.get(key_col.lower(), key_col)
 
     # -- expected columns from the spec --
     expected: list[tuple[str, str]] = []
+    branch_off: set[str] = set()          # cols whose condition is resolved False
     for c in columns:
         cid = c["id"]
         if cid == key_col:
@@ -181,19 +221,22 @@ def check_table(
         req = c["required"]
         if req is False and not include_optional:
             continue
-        requirement = (
-            "required" if req is True
-            else "optional" if req is False
-            else f"required if: {req}"
-        )
+        requirement = _requirement_label(req, conds)
+        if requirement is None:           # conditional branch resolved off
+            branch_off.update(h.lower() for h in expand_column(cid)[0])
+            continue
         for h in expand_column(cid)[0]:
             expected.append((h, requirement))
     exp_names = {h.lower() for h, _ in expected}
     required_names = {h.lower() for h, r in expected if r == "required"}
     conditional = sorted({h for h, r in expected if r.startswith("required if")})
+    enforced_conditions = sorted(
+        {c["required"] for c in columns
+         if isinstance(c["required"], str) and conds.get(c["required"]) is True}
+    )
 
     missing_cols = sorted(h for h, r in expected if r == "required" and h.lower() not in lc)
-    skip = {key_col.lower()} | _KNOWN_EXTRA
+    skip = {key_col.lower()} | _KNOWN_EXTRA | branch_off
     unexpected_cols = sorted(
         h for h in headers if h.lower() not in exp_names and h.lower() not in skip
     )
@@ -287,6 +330,7 @@ def check_table(
         "headers": headers,
         "row_count": len(rows),
         "conditional_columns": conditional,
+        "enforced_conditions": enforced_conditions,
         "checks": {
             "coverage": coverage,
             "columns": {"missing": missing_cols, "unexpected": unexpected_cols},

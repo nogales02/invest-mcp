@@ -37,6 +37,9 @@ NDR_SPEC = {
                 {"id": "load_n", "about": "N load", "required": "calc_n", "allowed": True},
                 {"id": "eff_n", "about": "N retention eff", "required": "calc_n",
                  "allowed": True},
+                {"id": "load_type_n", "about": "load mode", "required": "calc_n",
+                 "allowed": True},
+                {"id": "load_p", "about": "P load", "required": "calc_p", "allowed": True},
                 {"id": "note", "about": "free text", "required": False, "allowed": True},
             ],
         },
@@ -119,6 +122,26 @@ def test_build_template_conditional_and_optional_columns():
     lean = biotable.build_template("lucode", cols, [1], include_optional=False)
     assert "note" not in lean["headers"]                 # optional dropped
     assert "load_n" in lean["headers"]                   # conditional kept
+
+
+def test_build_template_resolves_conditions_from_args():
+    cols = spec_translate.table_arg_specs(NDR_SPEC)["biophysical_table_path"]["columns"]
+    out = biotable.build_template(
+        "lucode", cols, [1], conditions={"calc_n": True, "calc_p": False}
+    )
+    # calc_n on -> its columns are hard-required
+    assert "load_type_n" in out["headers"] and "load_n" in out["headers"]
+    assert out["column_help"]["load_n"]["requirement"] == "required"
+    # calc_p off -> its columns are dropped entirely
+    assert "load_p" not in out["headers"]
+
+
+def test_build_template_unlisted_condition_stays_advisory():
+    cols = spec_translate.table_arg_specs(NDR_SPEC)["biophysical_table_path"]["columns"]
+    out = biotable.build_template("lucode", cols, [1], conditions={"calc_n": True})
+    # calc_p not mentioned -> column kept, still flagged conditional
+    assert "load_p" in out["headers"]
+    assert out["column_help"]["load_p"]["requirement"] == "required if: calc_p"
 
 
 def test_build_template_expands_placeholder_columns():
