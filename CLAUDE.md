@@ -106,9 +106,10 @@ src/invest_mcp/
     project.py       convención de "proyecto InVEST": scaffold del árbol + project.json (stdlib, corre en el server)
     readiness.py     escanea data/ + tables/, adivina rol por nombre, casa contra los inputs required de cada modelo (stdlib + spec_translate; puro)
     biotable.py      esqueleto de tabla biofísica: expande columnas [MONTH]/[SOIL_GROUP], ensambla el CSV (una fila por lucode, celdas en blanco), parsea leyenda (stdlib; puro)
+    datastack.py     lee/escribe el parameter set `.invest.json` del Workbench ({args, model_id, invest_version}); tolera `model_name` legacy; relativize/absolutize de rutas (stdlib; puro) — punto de integración con el Workbench
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
   geo/
-    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds + run_fetch_dem/run_fetch_landcover/run_fetch_climate/run_fetch_soil; subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds + run_fetch_dem/run_fetch_landcover/run_fetch_climate/run_fetch_soil/run_fetch_hydrography; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
     summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
     compare.py       (CORRE EN invest-geo) alinea escenario->baseline, ráster diferencia + delta stats + zonal + escribe compare.json
@@ -116,13 +117,14 @@ src/invest_mcp/
     hydro.py         (CORRE EN invest-geo) delineación de cuencas: pygeoprocessing fill_pits→flow_dir_d8→flow_accum→extract_streams_d8→snap outlets→delineate_watersheds_d8; escribe el vector de cuencas + intermedios en `<dst_stem>_hydro/`
     fetch.py         (CORRE EN invest-geo, TOCA RED) op=dem|landcover: descarga de buckets AWS públicos vía GDAL `/vsicurl/` (sin auth) — dem=Copernicus GLO-30 (`copernicus-dem-30m`, tiles 1°), landcover=ESA WorldCover 10m 2020/2021 (`esa-worldcover`, tiles 3°, +class_legend). `_download_layer` mosaica; `reproject_clip_describe` = cola común (reproyecta/recorta vía `prep`, describe) — la reusa `climate.py`
     climate.py       (CORRE EN invest-geo, TOCA RED) precip/ETo de **WorldClim v2.1** (climatología mensual, sin auth, `/vsizip//vsicurl/`): variable=precipitation (`prec`, mm) | eto (Hargreaves-Samani desde `tmin/tmax/tavg` + Ra por latitud/DOY). period=monthly (12 ficheros, `{month}` en dst) | annual (suma). resolution 10m..30s
-    soil.py          (CORRE EN invest-geo, TOCA RED) suelo de **SoilGrids 2.0** (ISRIC, 250 m, sin auth, VRT global vía `/vsicurl/` + `WarpedVRT` IGH→EPSG:4326, ventana al bbox): variable=texture (sand/silt/clay %, `{fraction}` en dst) | hydrologic_soil_group (HSG 1..4 derivado del triángulo textural USDA — aprox. solo-textura) | usle_k (K por Williams/EPIC 1995 desde sand/silt/clay/SOC → SI ×0.1317). depth 0-5cm..100-200cm; stat mean/Q0.05/Q0.5/Q0.95. Reusa `fetch.reproject_clip_describe`
+    soil.py          (CORRE EN invest-geo, TOCA RED) suelo de **SoilGrids 2.0** (ISRIC, 250 m, sin auth, VRT global vía `/vsicurl/` + `WarpedVRT` IGH→EPSG:4326, ventana al bbox): variable=texture (sand/silt/clay %, `{fraction}` en dst) | hydrologic_soil_group (HSG 1..4 derivado del triángulo textural USDA — aprox. solo-textura) | usle_k (K por Williams/EPIC 1995 desde sand/silt/clay/SOC → SI ×0.1317) | depth_to_bedrock (**SoilGrids 2017** BDTICM, GeoTIFF global ya en EPSG:4326, cm→mm para AWY `depth_to_root_rest_layer`). depth 0-5cm..100-200cm; stat mean/Q0.05/Q0.5/Q0.95. Reusa `fetch.reproject_clip_describe`
+    hydrography.py   (CORRE EN invest-geo, TOCA RED) hidrografía de **HydroSHEDS v1** (sin auth): product=rivers (HydroRIVERS v1.0, líneas) | basins (HydroBASINS v1c standard, polígonos, level 1..12). Lee el shapefile del zip remoto vía GDAL `/vsizip//vsicurl/` + filtro bbox (índice `.sbn` → transferencia local; `CPL_VSIL_CURL_USE_HEAD=NO` porque el server bloquea HEAD). region auto-detectada del centroide del AOI contra 9 envolventes continentales (af ar as au eu gr na sa si); centroide ambiguo → pide region=. clip_to_aoi por defecto False (features enteras que intersectan). driver por extensión del dst
     _preview_worker.py  (SUBPROCESO AISLADO) rinde el PNG de preview (matplotlib), best-effort; `--diverging` = RdBu_r centrado en 0 para un ráster diferencia
   calibration/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 29 tools MCP + register(server)
+  tools.py           las 32 tools MCP + register(server)
   resources.py       4 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos) + register(server)
   prompts.py         2 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios) + register(server)
 environment-geo.yml  env invest-geo   |  environment-cal.yml  env invest-cal
@@ -134,11 +136,13 @@ tests/               test_spec_translate, test_sandbox, test_geo_payload,
                      test_calibration_tools, test_summarize, test_compare,
                      test_prep, test_readiness, test_resources_prompts,
                      test_hydro, test_biotable, test_fetch,
-                     test_climate, test_soil  (108 tests, 6 skip sin numpy)
+                     test_climate, test_soil, test_hydrography,
+                     test_datastack  (141 tests, 6 skip sin numpy)
 ```
 
 `geo/preflight.py` (y `geo/summarize.py`, `geo/compare.py`, `geo/prep.py`,
-`geo/hydro.py`, `geo/fetch.py`, `geo/climate.py`, `geo/soil.py`) **solo importan
+`geo/hydro.py`, `geo/fetch.py`, `geo/climate.py`, `geo/soil.py`,
+`geo/hydrography.py`) **solo importan
 stdlib al cargar**; rasterio/pyproj/shapely/pyogrio/geopandas/pygeoprocessing/numpy se
 importan dentro de las funciones (para que el env `.venv` pueda importar el
 módulo sin GDAL, aunque nunca lo ejecuta).
@@ -151,7 +155,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (29 tools) + 4 resources + 2 prompts
+## 4. Tool surface (32 tools) + 4 resources + 2 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -172,7 +176,8 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `fetch_dem(dst_path, aoi_path="", bbox=None, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="bilinear", source="cop30", keep_intermediate=False)` | **TOCA RED.** Descarga un DEM para el AOI y lo deja como GeoTIFF. `source="cop30"` (único cableado): **Copernicus GLO-30** (~30 m) del bucket AWS público `copernicus-dem-30m` — sin credenciales, contacta solo `copernicus-dem-30m.s3.amazonaws.com`. Área por `aoi_path` (vector; sus bounds mandan y con `clip_to_aoi` enmascara al polígono) y/o `bbox` `[minx,miny,maxx,maxy]` en **lon/lat (EPSG:4326)**. `buffer_deg` pad; `target_crs`/`target_resolution` reproyectan (reusa `prep._op_reproject`/`_op_clip`). Tiles oceánicos/fuera de cobertura → `tiles_missing`. Necesita `invest-geo`. |
 | `fetch_landcover(dst_path, aoi_path="", bbox=None, year=2021, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="nearest", source="worldcover", keep_intermediate=False)` | **TOCA RED.** Igual que `fetch_dem` pero **ESA WorldCover 10 m** (`year` 2020/2021, 11 clases) del bucket AWS público `esa-worldcover` (sin auth, contacta `esa-worldcover.s3.eu-central-1.amazonaws.com`). `resampling="nearest"` por defecto (categórico). La respuesta trae `class_legend` (valor→etiqueta) listo para `tables_from_template`. Necesita `invest-geo`. |
 | `fetch_climate(dst_path, variable, aoi_path="", bbox=None, source="worldclim", period="monthly", months=None, resolution="10m", target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="bilinear", keep_intermediate=False)` | **TOCA RED.** Climatología de **WorldClim v2.1** (1970–2000, sin auth, contacta `geodata.ucdavis.edu`). `variable`: `precipitation` (`prec`, mm) o `eto` (ETo **Hargreaves-Samani** desde `tmin/tmax/tavg` + Ra por latitud/DOY — *modelada*, no medida). `period="monthly"` → 12 rásters (forma de SWY; `dst_path` **debe** llevar `{month}`, p.ej. `precip_{month}.tif`); `period="annual"` → 1 ráster = suma (forma de AWY). `months=[6,7,8]` subconjunto. `resolution` `10m`(def, ~18 km)/`5m`/`2.5m`/`30s`(~1 km). Necesita `invest-geo`. |
-| `fetch_soil(dst_path, variable, aoi_path="", bbox=None, source="soilgrids", depth="0-5cm", stat="mean", target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="", keep_intermediate=False)` | **TOCA RED.** Suelo de **SoilGrids 2.0** (ISRIC, 250 m, sin auth, contacta `files.isric.org`). VRT global en Homolosine → `WarpedVRT` a lon/lat + ventana al bbox antes de reproyectar. `variable`: `texture` (sand/silt/clay % en peso — 3 rásters, `dst_path` **debe** llevar `{fraction}`) · `hydrologic_soil_group` (HSG `1..4`=A..D para SWY/Urban Flood, derivado **solo del triángulo textural USDA** — aprox.; uint8 nodata 0; `resampling` def `nearest`) · `usle_k` (erodibilidad K para SDR en SI `t·ha·h·ha⁻¹·MJ⁻¹·mm⁻¹` vía Williams/EPIC 1995 desde sand/silt/clay/SOC). `depth` `0-5cm`(def)/`5-15cm`/`15-30cm`/`30-60cm`/`60-100cm`/`100-200cm`; `stat` `mean`(def)/`Q0.05`/`Q0.5`/`Q0.95`. Necesita `invest-geo`. |
+| `fetch_soil(dst_path, variable, aoi_path="", bbox=None, source="soilgrids", depth="0-5cm", stat="mean", target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="", keep_intermediate=False)` | **TOCA RED.** Suelo de **SoilGrids 2.0** (ISRIC, 250 m, sin auth, contacta `files.isric.org`). VRT global en Homolosine → `WarpedVRT` a lon/lat + ventana al bbox antes de reproyectar. `variable`: `texture` (sand/silt/clay % en peso — 3 rásters, `dst_path` **debe** llevar `{fraction}`) · `hydrologic_soil_group` (HSG `1..4`=A..D para SWY/Urban Flood, derivado **solo del triángulo textural USDA** — aprox.; uint8 nodata 0; `resampling` def `nearest`) · `usle_k` (erodibilidad K para SDR en SI `t·ha·h·ha⁻¹·MJ⁻¹·mm⁻¹` vía Williams/EPIC 1995 desde sand/silt/clay/SOC) · `depth_to_bedrock` (profundidad absoluta a lecho rocoso para AWY `depth_to_root_rest_layer`, de **SoilGrids 2017** `BDTICM` — GeoTIFF global ya en EPSG:4326, cm→mm; `depth`/`stat` se ignoran; el GeoTIFF de 8.5 GB abre lento ~2 min). `depth` `0-5cm`(def)/`5-15cm`/`15-30cm`/`30-60cm`/`60-100cm`/`100-200cm`; `stat` `mean`(def)/`Q0.05`/`Q0.5`/`Q0.95`. Necesita `invest-geo`. |
+| `fetch_hydrography(dst_path, product, aoi_path="", bbox=None, source="hydrosheds", region="", level=8, target_crs="", clip_to_aoi=False, buffer_deg=0.05, keep_intermediate=False)` | **TOCA RED.** Hidrografía de **HydroSHEDS v1** (WWF/McGill, sin auth, contacta `data.hydrosheds.org`). `product`: `rivers` (HydroRIVERS v1.0 — líneas con `DIS_AV_CMS`, `UPLAND_SKM`, orden Strahler, topología `NEXT_DOWN`) · `basins` (HydroBASINS v1c standard — polígonos, `level` Pfafstetter `1..12`, def 8). Lee el shapefile del zip remoto vía `/vsizip//vsicurl/` + filtro bbox (índice `.sbn`). `region` (`af ar as au eu gr na sa si`) en blanco = auto-detección por el centroide del AOI; centroide ambiguo (p.ej. Oriente Medio) → error pidiendo `region=`. `clip_to_aoi=False` (def) = features enteras que intersectan el bbox; `True` = `gpd.clip` geométrico. Driver por extensión de `dst_path` (`.gpkg`/`.shp`/`.geojson`). Necesita `invest-geo`. |
 | `scaffold_project(root, name="", target_crs="", aoi_path="", overwrite=False)` | Crea el árbol de "proyecto InVEST" (`data/raw`, `data/processed`, `tables`, `datastacks`, `jobs`, `logs`) + `project.json` (nombre, CRS objetivo, AOI, `datasets: []`). Añade `root` a la allow-list de la sesión (lecturas y **escrituras**). Idempotente; `overwrite` solo reescribe el `project.json`. No necesita `invest-geo`. |
 | `project_readiness(root, models=None)` | Escanea `data/` + `tables/` del proyecto, adivina el rol de cada fichero por su nombre (`dem`, `lulc`, `watersheds`, `biophysical_table`…) y lo casa contra los inputs **required** de cada modelo. Devuelve `inventory`, `assessments` (por modelo: `matched` / `ambiguous` / `missing` / `needs_values`), `ready_to_attempt`, `gaps_by_model` y un digest NL. **Apoya** la decisión de qué correr, no la toma. Los inputs numéricos/opción van en `needs_values`, no bloquean. No necesita `invest-geo`. |
 | `reproject_layer(src_path, dst_path, target_crs, resampling="nearest", resolution=None)` | Reproyecta un ráster o vector a `target_crs` (EPSG/WKT/proj). `resampling` (solo ráster): `nearest` para categóricos (land cover), `bilinear`/`cubic`/`average` para continuos. `resolution` `[x,y]` opcional = tamaño de píxel objetivo. Necesita `invest-geo`. |
@@ -180,6 +185,8 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")` | Pone varios rásters en **una malla idéntica** (mismo CRS + tamaño de píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`. Malla **o** desde `reference_path` (un ráster) **o** desde `target_crs`+`resolution`+`extent` juntos. `resampling` se aplica a todos (correr dos veces si mezcla categóricos y continuos). Necesita `invest-geo`. |
 | `delineate_watersheds(dem_path, outlets_path, dst_path, threshold_flow_accumulation=1000, snap_distance_px=10, fill_pits=True, keep_intermediate=False)` | Corta polígonos de cuenca aguas arriba de puntos de salida con la cadena D8 de **pygeoprocessing** (mismo motor que InVEST → las cuencas cuadran con el routing de SDR/NDR/SWY): fill_pits → flow_dir_d8 → flow_accum → streams (umbral en px) → snap de cada outlet a la red → `delineate_watersheds_d8`. Reproyecta los outlets al CRS del DEM. Escribe `.gpkg`/`.shp`/`.geojson`; intermedios en `<dst_stem>_hydro/` (se borran salvo `keep_intermediate`). `snap_distance_px=0` desactiva el snap. Devuelve descripción del vector + `snap_report` por punto. Necesita `invest-geo`. |
 | `tables_from_template(model_id, lulc_path, dst_path, table_arg="", legend_path="", include_optional=True, max_classes=1000)` | Esqueleto de tabla biofísica/lookup de un modelo: una fila por lucode único del LULC + las columnas que pide su MODEL_SPEC (celdas de coeficiente en blanco). `table_arg` = qué CSV templetar (auto-detecta el que va por `lucode`; si hay varios, el error los lista). `legend_path` (CSV `code,label`) → añade columna `description`. Expande `[MONTH]`→`_1..12` y `[SOIL_GROUP]`→`_a..d`; otros `[TOKEN]` quedan literales con nota. Devuelve `headers`, `column_help` (about/units/requirement por columna), `classes` (valor+px), `narrative`. Necesita `invest-geo` (lee las clases del ráster). |
+| `import_datastack(src_path)` | Lee un **datastack** `.invest.json` (parameter set, p.ej. uno que guardó el Workbench) y reporta qué trae: modelo, `args`, `required_missing`, por cada ruta si existe en disco y si cae dentro del sandbox, `ready`. Resuelve rutas relativas contra la carpeta del datastack. Enchufa directo con `validate_invest_args` → `run_invest_model`. stdlib puro, no necesita `invest-geo`. |
+| `export_datastack(dst_path, model_id="", args=None, job_id="", relative=False)` | Escribe un **datastack** `.invest.json` (`{args, model_id, invest_version}`) que el Workbench abre directamente — el punto de hand-off con el Workbench. Da `model_id`+`args`, o `job_id` para sacar modelo+args de un run terminado. `relative=True` reescribe las rutas de fichero relativas a `dst_path` (stack portable). Chequea las rutas contra el sandbox y reporta su existencia sin bloquear. stdlib puro. |
 | `validate_calibration_config(config)` | Chequea una config de calibración (modelo/params/objetivo, columnas de Obs_Data, flags `Status_Cal_*`, caps de factores, sandbox). |
 | `run_calibration(model, parameters, objective, optimizer, observed_data_path, model_inputs, ...)` | Job de calibración (spotpy DDS/LHS/SCE-UA sobre InVEST). Devuelve `job_id`. Modelos: **AWY, SWY, SDR, NDR_N, NDR_P**. |
 | `get_calibration_job(job_id)` | Estado + iteraciones; al terminar: best params, objetivo, obs-vs-sim, `diagnostics` (sensibilidad Spearman por parámetro), `dotty_data` (rutas a JSON ploteables). |
@@ -212,13 +219,15 @@ Convenciones:
 ### ⟳ Para retomar (2026-08-30) — dónde estamos
 
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
-8–10). Todo verificado end-to-end contra `Dummy_InVEST` o un bbox de los Alpes.
-**29 tools + 4 resources + 2 prompts. 108 tests en verde** (`pytest -q`, 6 skip
+8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
+`Dummy_InVEST` o un bbox de los Alpes.
+**32 tools + 4 resources + 2 prompts. 141 tests en verde** (`pytest -q`, 6 skip
 sin numpy).
 
-**8 ramas apiladas sobre `main`, NINGUNA fusionada**, cada una con **PR abierto
+**11 ramas apiladas sobre `main`, NINGUNA fusionada**, cada una con **PR abierto
 apuntando a la de abajo** (fusionar en este orden — GitHub reapunta la siguiente
-a `main` sola — o cerrar todas y hacer un squash de `fetch-soil` contra `main`):
+a `main` sola — o cerrar todas y hacer un squash de `fetch-soil-bedrock` contra
+`main`):
 
 ```
 main
@@ -229,34 +238,44 @@ main
                  └─ fetch-dem        d6453d1  PR #6 → #5   geo/fetch.py op=dem (Copernicus GLO-30, sin auth)
                      └─ fetch-landcover  de81391  PR #7 → #6   geo/fetch.py op=landcover (ESA WorldCover, sin auth)
                          └─ fetch-climate  5ed59c6  PR #8 → #7   geo/climate.py (WorldClim precip + Hargreaves ETo)
-                             └─ fetch-soil  fa67940  PR #1 → #8   geo/soil.py (SoilGrids 2.0: texture + HSG + USLE K)   ← HEAD
+                             └─ fetch-soil  fa67940  PR #1 → #8   geo/soil.py (SoilGrids 2.0: texture + HSG + USLE K)
+                                 └─ fetch-hydrography  26423d2  PR #9 → #1   geo/hydrography.py (HydroSHEDS rivers/basins)
+                                     └─ datastack-io   e2d28c6  PR #10 → #9  workspace/datastack.py + import/export_datastack
+                                         └─ fetch-soil-bedrock  (HEAD)   PR #11 → #10  geo/soil.py variable=depth_to_bedrock (SoilGrids 2017 BDTICM)   ← HEAD
 ```
 
 Todas pusheadas a `github.com/nogales02/invest-mcp`. `gh` CLI **no** está
-instalado en esta máquina → los 8 PRs se abrieron por la API de GitHub con el
-token del credential manager de git (`git credential fill`).
+instalado en esta máquina → los PRs se abren por la API de GitHub con el
+token del credential manager de git (`git credential fill`). PRs #1–#8 abiertos
+en la sesión anterior; #9–#11 pendientes de abrir igual.
 
 **Cadena de preparación ya montada** (todas las tools existen y están
 verificadas): `scaffold_project` →
-`fetch_dem`/`fetch_landcover`/`fetch_climate`/`fetch_soil` →
+`fetch_dem`/`fetch_landcover`/`fetch_climate`/`fetch_soil`/`fetch_hydrography` →
 `reproject_layer`/`clip_to_aoi`/`align_raster_stack` → `delineate_watersheds`
-→ `tables_from_template` → `project_readiness` → `validate_invest_args` →
-`run_invest_model` → `summarize_results`/`compare_scenarios`.
+→ `tables_from_template` → `project_readiness` →
+`import_datastack`/`export_datastack` (round-trip Workbench) →
+`validate_invest_args` → `run_invest_model` →
+`summarize_results`/`compare_scenarios`.
 
 **Gotcha de esta sesión:** el acceso a S3 (`*.s3.amazonaws.com`) desde esta
 máquina fue **intermitente** — algunas aperturas `/vsicurl/` tardaron >180 s o
 colgaron (p.ej. el tile COP30 de Angola), otras fueron rápidas (Alpes). No es
 bug del código; reintentar si un `fetch_*` cuelga. **`files.isric.org`
 (SoilGrids) va parecido**: leer el VRT global vía `WarpedVRT` tarda ~2–3 min
-para un AOI pequeño (el timeout del worker de fetch es 1800 s, sobra).
+para un AOI pequeño (el timeout del worker de fetch es 1800 s, sobra). El
+GeoTIFF global BDTICM (SoilGrids 2017, ~8.5 GB, no-COG, strip) es aún más
+frágil: una lectura de ventana puede cortarse a media franja
+(`TIFFReadEncodedStrip() failed`) — `_read_bdticm` reintenta 4 veces. HydroSHEDS
+(`data.hydrosheds.org`) fue **rápido y fiable** (rivers ~8 s, basins ~3 s) y
+**bloquea HEAD** → `CPL_VSIL_CURL_USE_HEAD=NO`.
 
 **Siguientes candidatos** (roadmap §6, "Capacidades pendientes por etapa"):
-`fetch_hydrography` (HydroSHEDS) · `fetch_soil` profundidad a lecho rocoso / PAWC
-(otro producto: SoilGrids 2017 `BDTICM`) · `fetch_climate`
+`fetch_hydrography` `source="hydrorivers_global"`/HydroBASINS lakes · `fetch_soil`
+PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) y refinar HSG con Ksat+profundidad · `fetch_climate`
 `source="terraclimate"`/`"chirps"` · base de coeficientes citados `[resource]`
-para rellenar las tablas de `tables_from_template` · `import_datastack` /
-`export_datastack` (punto de integración con el Workbench, aún sin tool) ·
-`build_report`.
+para rellenar las tablas de `tables_from_template` · `clone_job` ·
+`build_report` · `recommend_model` `[prompt]`.
 
 ### Funciona / verificado
 - Autodetección de `invest.exe` + envs `invest-geo` / `invest-cal`; `invest_env`,
@@ -389,9 +408,27 @@ para rellenar las tablas de `tables_from_template` · `import_datastack` /
   media 0.032 (rango global típico 0.01–0.07). Triángulo textural USDA verificado
   contra las 12 clases; K más alto en limos, más bajo en arenas. La lectura del
   VRT de ISRIC tardó ~2–3 min (misma clase de lentitud de red que S3).
-- 108 tests en verde (+ `test_soil`; 6 skips: helpers numpy — `_ra_mm_per_day`,
-  triángulo textural, EPIC K — con numpy ausente del `.venv`; se verifican en
-  `invest-geo`). Registrado y "Connected" en Claude Code.
+  `depth_to_bedrock` (SoilGrids 2017 `BDTICM`, cm→mm) añadido después: GeoTIFF
+  global no-COG → lectura de ventana propensa a `TIFFReadEncodedStrip failed`,
+  `_read_bdticm` reintenta 4×.
+- **`fetch_hydrography`** (`geo/hydrography.py`, TOCA RED) end-to-end
+  (2026-08-30, .venv → invest-geo) sobre el bbox de los Alpes: HydroSHEDS v1
+  vía `/vsizip//vsicurl/` + filtro bbox. `rivers` → **100 líneas** HydroRIVERS
+  reproyectadas a EPSG:32632 con atributos reales (`DIS_AV_CMS`, `ORD_STRA`,
+  `NEXT_DOWN`, `HYBAS_L12`); `basins` `level=9` → **10 polígonos** HydroBASINS
+  (`HYBAS_ID`, `PFAF_ID`, `NEXT_DOWN`). Auto-detección de `region` desde el
+  centroide → `"eu"`. Salida GPKG y GeoJSON. Rápido y fiable (~3–8 s).
+- **`export_datastack` / `import_datastack`** (`workspace/datastack.py`, stdlib
+  puro) end-to-end (2026-08-30) con el registry real: `export_datastack(job_id=
+  carbon-…)` sacó modelo+args del `datastack.json` del job → `.invest.json`
+  válido (`model_id` + `invest_version` 3.20.1), marcó la ruta de un input
+  fuera del sandbox sin bloquear; `import_datastack` lo reparseó → modelo
+  resuelto, `required_missing []`, `files_missing []`, `ready`. `relative=True`
+  reescribe rutas a `../data/…`.
+- 141 tests en verde (+ `test_hydrography` 16, `test_datastack` 15, +2 en
+  `test_soil`; 6 skips: helpers numpy — `_ra_mm_per_day`, triángulo textural,
+  EPIC K — con numpy ausente del `.venv`; se verifican en `invest-geo`).
+  Registrado y "Connected" en Claude Code.
 
 ### Pendiente
 - `conda-lock` para solves 100% reproducibles entre plataformas.
@@ -473,12 +510,18 @@ receta que el LLM sigue y adapta.
   `source="soilgrids"` (SoilGrids 2.0, sin auth, VRT global vía `/vsicurl/` +
   `WarpedVRT` IGH→EPSG:4326). `variable`: `texture` (sand/silt/clay % crudo) ·
   `hydrologic_soil_group` (HSG 1..4 del triángulo textural USDA — aprox.
-  solo-textura) · `usle_k` (Williams/EPIC 1995 → SI). Verificado end-to-end
-  (ver §5). Pendiente: profundidad a lecho rocoso / PAWC (SoilGrids 2017
-  `BDTICM` / clases de agua disponible), `stat` distinto de `mean` no probado,
-  refinar HSG con Ksat + profundidad (HYSOGs250m / HiHydroSoil).
-- `[tool]` `fetch_hydrography` — mismo patrón (módulo propio): HydroSHEDS /
-  HydroRIVERS / HydroBASINS. Ver `invest://data-sources`.
+  solo-textura) · `usle_k` (Williams/EPIC 1995 → SI) · `depth_to_bedrock`
+  (SoilGrids 2017 `BDTICM`, GeoTIFF global en EPSG:4326, cm→mm para AWY
+  `depth_to_root_rest_layer`; `_read_bdticm` reintenta la lectura de ventana).
+  Verificado end-to-end (ver §5). Pendiente: PAWC (SoilGrids 2017 `AWCh1..3` /
+  `WWP`), `stat` distinto de `mean` no probado, refinar HSG con Ksat +
+  profundidad (HYSOGs250m / HiHydroSoil).
+- ~~`[tool]` `fetch_hydrography`~~ **PARCIAL** (2026-08-30) — `geo/hydrography.py`,
+  `source="hydrosheds"`: `product=rivers` (HydroRIVERS v1.0) / `basins`
+  (HydroBASINS v1c standard, level 1..12). Shapefile del zip remoto vía
+  `/vsizip//vsicurl/` + filtro bbox; `region` auto-detectada del centroide.
+  Verificado end-to-end (ver §5). Pendiente: HydroBASINS "lake" / customized
+  Pfafstetter, subcuencas anidadas, poblar `datasets` del manifest.
 - Afinar `fetch_*`: chunking para AOIs grandes (mosaica en memoria); poblar
   `datasets` del `project.json` desde estas rutinas.
 - ~~`[tool]` `delineate_watersheds`~~ **HECHO** (2026-08-30) — `geo/hydro.py`,
@@ -503,8 +546,12 @@ receta que el LLM sigue y adapta.
 **Elegir modelo / integración Workbench**
 - `[prompt]` `recommend_model` — de la pregunta del usuario a modelo(s) + datos que
   necesita cada uno (razonamiento del LLM, apoyado por `invest://models`).
-- `[tool]` `import_datastack` / `export_datastack` — round-trip `.invest.json` con
-  el Workbench (**el punto de integración declarado, aún sin tool**).
+- ~~`[tool]` `import_datastack` / `export_datastack`~~ **HECHO** (2026-08-30) —
+  `workspace/datastack.py` (stdlib puro) + tools. Round-trip del parameter set
+  `.invest.json` (`{args, model_id, invest_version}`) con el Workbench; tolera
+  `model_name` legacy; `export` puede sacar modelo+args de un `job_id`;
+  `relative=True` para stacks portables. Verificado end-to-end (ver §5).
+  Pendiente: datastack "archive" (`.invest.tar.gz` con los datos empaquetados).
 - `[tool]` `clone_job` — copiar los args de un run terminado y re-ejecutar con
   cambios (alimenta `compare_scenarios`).
 - `[tool]` `explain_provenance` — linaje completo de un resultado desde

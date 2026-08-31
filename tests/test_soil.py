@@ -32,6 +32,14 @@ def test_depth_and_stat_constants():
     assert soil._TO_PERCENT["soc"] == 100.0 and soil._TO_PERCENT["clay"] == 10.0
 
 
+def test_bdticm_url_and_variable():
+    assert "depth_to_bedrock" in soil._VARIABLES
+    assert soil._BDTICM_URL == (
+        "/vsicurl/https://files.isric.org/soilgrids/former/2017-03-10/data/"
+        "BDTICM_M_250m_ll.tif"
+    )
+
+
 # ---------------------------------------------------------------------------
 # USDA texture triangle
 # ---------------------------------------------------------------------------
@@ -141,6 +149,14 @@ def test_run_fetch_soil_builds_payload(captured):
 def test_tool_rejects_bad_variable():
     out = tools.fetch_soil("s.tif", "porosity", bbox=[0, 0, 1, 1])
     assert out["ok"] is False and "hydrologic_soil_group" in out["error"]
+    assert "depth_to_bedrock" in out["error"]
+
+
+def test_depth_to_bedrock_builds_payload(captured):
+    geo_client.run_fetch_soil(
+        "bedrock.tif", "depth_to_bedrock", settings=None, bbox_wgs84=[6, 45, 7, 46])
+    p = captured["payload"]
+    assert p["variable"] == "depth_to_bedrock" and p["source"] == "soilgrids"
 
 
 def test_tool_texture_requires_fraction_placeholder(tmp_path, monkeypatch):

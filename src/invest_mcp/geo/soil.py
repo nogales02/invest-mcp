@@ -20,6 +20,10 @@ AOI bbox.
 * ``"usle_k"``                -> soil erodibility K via the Williams / EPIC (1995)
   equation from sand/silt/clay/SOC, converted to SI units
   (t.ha.h.ha-1.MJ-1.mm-1). One raster, float32.
+* ``"depth_to_bedrock"``      -> absolute depth to bedrock from **SoilGrids 2017**
+  (``BDTICM``, 250 m, already EPSG:4326), converted cm -> mm for InVEST Annual
+  Water Yield's ``depth_to_root_rest_layer_path``. One raster, float32.
+  ``depth`` / ``stat`` do not apply.
 
 Payload (stdin, JSON)::
 
@@ -52,18 +56,22 @@ from pathlib import Path
 
 # keep GDAL's remote reads snappy and resilient
 os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
-os.environ.setdefault("GDAL_HTTP_TIMEOUT", "60")
-os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "3")
-os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "2")
+os.environ.setdefault("GDAL_HTTP_TIMEOUT", "120")
+os.environ.setdefault("GDAL_HTTP_MAX_RETRY", "5")
+os.environ.setdefault("GDAL_HTTP_RETRY_DELAY", "3")
 os.environ.setdefault("CPL_VSIL_CURL_USE_HEAD", "NO")
 
 _SOILGRIDS_BASE = "https://files.isric.org/soilgrids/latest/data"
 _SOILGRIDS_HOST = "https://files.isric.org"
+# SoilGrids 2017 (the former product) keeps a few layers the 2.0 grids dropped --
+# BDTICM = absolute depth to bedrock (cm), a single global GeoTIFF in lon/lat.
+_SG2017_BASE = "https://files.isric.org/soilgrids/former/2017-03-10/data"
+_BDTICM_URL = f"/vsicurl/{_SG2017_BASE}/BDTICM_M_250m_ll.tif"
 _SG_DEPTHS = ("0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm", "100-200cm")
 _SG_STATS = ("mean", "Q0.05", "Q0.5", "Q0.95")
 _SG_NODATA_IN = -32768
 _OUT_NODATA = -9999.0
-_VARIABLES = ("texture", "hydrologic_soil_group", "usle_k")
+_VARIABLES = ("texture", "hydrologic_soil_group", "usle_k", "depth_to_bedrock")
 _FRACTIONS = ("sand", "silt", "clay")
 
 # SoilGrids 2.0 stores clay/sand/silt as g/kg and soc as dg/kg; dividing by these
@@ -106,6 +114,41 @@ def _read_prop(prop: str, depth: str, stat: str, bbox):
             transform = vrt.window_transform(win)
     arr = np.ma.masked_equal(np.ma.masked_invalid(arr), _SG_NODATA_IN)
     return arr / _TO_PERCENT[prop], transform
+
+
+def _read_bdticm(bbox, *, attempts: int = 4):
+    """Windowed read of SoilGrids 2017 BDTICM (absolute depth to bedrock, cm).
+    Already EPSG:4326 so no WarpedVRT -- just a plain windowed read. 0 is a valid
+    value (bedrock at the surface); only the sentinel and negatives are masked.
+
+    BDTICM is a single ~8.5 GB strip-organised (non-COG) GeoTIFF, so a windowed
+    read still pulls whole compressed strips over HTTP and an occasional
+    transfer is truncated (``TIFFReadEncodedStrip() failed``). Retry a few
+    times, reopening the dataset each attempt."""
+    import time
+
+    import numpy as np
+    import rasterio
+    from rasterio.windows import from_bounds
+
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        try:
+            with rasterio.open(_BDTICM_URL) as src:
+                win = from_bounds(*bbox, transform=src.transform)
+                win = win.round_offsets().round_lengths()
+                arr = src.read(1, window=win, masked=True).astype("float64")
+                transform = src.window_transform(win)
+            arr = np.ma.masked_less(
+                np.ma.masked_equal(np.ma.masked_invalid(arr), _SG_NODATA_IN), 0.0)
+            return arr, transform
+        except rasterio.errors.RasterioIOError as exc:  # truncated strip, timeout
+            last_exc = exc
+            if i < attempts - 1:
+                time.sleep(5 * (i + 1))
+    raise RuntimeError(
+        f"BDTICM read failed after {attempts} attempts (ISRIC network / "
+        f"truncated strip). Last error: {last_exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -236,13 +279,40 @@ def fetch_soil(payload: dict) -> dict:
                        and payload.get("aoi_path") else None),
     )
 
-    sand, tr = _read_prop("sand", depth, stat, bbox)
-    silt, _ = _read_prop("silt", depth, stat, bbox)
-    clay, _ = _read_prop("clay", depth, stat, bbox)
-
     outputs: list[dict] = []
     notes: list[str] = []
     group_legend = None
+
+    if variable == "depth_to_bedrock":
+        depth_cm, tr = _read_bdticm(bbox)
+        wgs = work / "depth_to_bedrock_wgs84.tif"
+        _write_wgs84(depth_cm * 10.0, tr, wgs, _OUT_NODATA, "float32")
+        dst = Path(dst_tmpl)
+        desc = reproject_clip_describe(wgs, dst, work, **common)
+        outputs.append({"path": str(dst), "raster": desc})
+        units = "mm (absolute depth to bedrock)"
+        notes.append(
+            "Absolute depth to bedrock from SoilGrids 2017 (BDTICM, 250 m). "
+            "Source is cm; multiplied by 10 to give mm for InVEST Annual Water "
+            "Yield's depth_to_root_rest_layer_path. 0 = bedrock at the surface.")
+        notes.append(
+            "The global BDTICM GeoTIFF (~8.5 GB) has a slow first /vsicurl/ open "
+            "(~2 min for a small AOI) -- that is network latency, not a hang.")
+        if depth != "0-5cm" or stat != "mean":
+            notes.append("depth / stat are ignored for depth_to_bedrock.")
+        result = {
+            "ok": True, "variable": variable, "source": "soilgrids2017",
+            "depth": depth, "stat": stat, "units": units,
+            "provider_host": _SOILGRIDS_HOST, "bbox_wgs84": bbox,
+            "outputs": outputs, "notes": notes,
+        }
+        if not payload.get("keep_intermediate"):
+            shutil.rmtree(work, ignore_errors=True)
+        return result
+
+    sand, tr = _read_prop("sand", depth, stat, bbox)
+    silt, _ = _read_prop("silt", depth, stat, bbox)
+    clay, _ = _read_prop("clay", depth, stat, bbox)
 
     if variable == "texture":
         for frac, arr in (("sand", sand), ("silt", silt), ("clay", clay)):
