@@ -1,13 +1,67 @@
-# invest-mcp — curated project-state snapshot (2026-08-31, rev 12)
+# invest-mcp — curated project-state snapshot (2026-09-01, rev 13)
 
 Point-in-time synthesis so claude-mem and future sessions have the project history,
 not just today's tooling meta. Source of truth remains `CLAUDE.md`; this is the
 distilled state.
 
-## ⟳ RESUME POINT (2026-08-31) — read this first
+## ⟳ RESUME POINT (2026-09-01) — read this first
 
-**Latest work: H3 — conditional table columns resolved from model `args`
-(PR #22, merged, `main` = `a72c138`).** `tables_from_template` and
+**Latest work: resampling-aware prep + block-tiled fetch mosaic
+(PR #23, merged, `main` = `451ad7c`).** Two RAM-bounded improvements to the
+data-prep layer, both driven by the user's "always the most process/RAM-optimal
+solution" rule.
+
+_Resampling as a deliberate decision + a streaming warp._ `resampling` used to
+be a loose parameter with a fixed default and no logic, and the raster ops in
+`prep.py` read whole bands into memory. New **`geo/resampling.py`** (stdlib-only
+at load; osgeo/numpy inside functions): `choose_resampling(categorical,
+src_res_m, dst_res_m, explicit)` — the matrix categorical/continuous ×
+up/down/same (cat-down=`mode`, cat up/same=`nearest`, cont-down=`average`, cont
+up/same=`bilinear`); an `explicit` method is honoured verbatim but returns a
+`note` when it fights the data. `warp_raster(...)` = `gdal.Warp` streaming
+(multithread, `warpMemoryLimit` via `INVEST_MCP_WARP_MEM_MB` default 256,
+`GDAL_CACHEMAX` via `INVEST_MCP_GDAL_CACHE_MB` default 512, output
+TILED+DEFLATE+overviews, BIGTIFF=IF_SAFER) — RAM bounded regardless of size.
+`classify_raster` (decimated ≤512 px probe → categorical if integer and ≤64
+distinct classes), `raster_header` (metadata only, degrees→m for a geographic
+CRS). `prep.py` rewritten: `reproject` / `clip` / `resample` / `align_stack`
+warp via `resampling.warp_raster`; `align_stack` decides the method **per
+raster** with `resampling="auto"` so a mixed categorical+continuous stack
+aligns in one pass; `clip` builds a cleaned cutline (`make_valid` +
+`unary_union`) so `gdal.Warp`'s cutline no longer rejects a self-intersecting
+AOI ring (a regression the old `rasterio.mask` path had tolerated). Two new
+ops/tools: **`resample_raster`** (change the pixel without clipping — match
+`target_resolution` or a `reference`) and **`plan_grid`** (headers only →
+recommend the analysis grid = finest categorical layer, flag layers upsampled
+≥2×, ballpark cells/MB). New resource **`invest://resampling`** (the matrix +
+method glossary + how to pick the analysis grid). `reproject_layer` /
+`align_raster_stack` default to `"auto"`.
+
+_Block-tiled mosaic in `fetch.py`_ (ported from the user's
+`FUNCTIONS/worldcover.py` after a real continental-scale OOM). `_download_layer`
+no longer `rio_merge`s the whole bbox into one array: `_mosaic_grid` fixes the
+native EPSG:4326 output grid and the loop walks it in blocks of
+`_fetch_block_px()` px/side (`INVEST_MCP_FETCH_BLOCK_PX`, default 4096 ≈ 16 MB
+uint8), each block `rio_merge(bounds=<sub-bbox>)` + a windowed write → **peak
+RAM = one block** for any AOI. Response gains `mosaic_blocks` / `mosaic_grid`.
+
+Verified end-to-end (.venv → invest-geo): prep ops on `Dummy_InVEST`
+(`plan_grid` recommends the 100 m LULC grid and flags K upsampled ~8×;
+`resample` LULC→300m = `mode` with classes intact, DEM→300m = `average`;
+`align_stack` [LULC,DEM] ref=DEM = identical grid, `near` + `bilinear` in one
+pass); block mosaic against AWS (`fetch_dem` Alps `BLOCK_PX=400` → grid
+[540,360], 2 blocks, seam-free; `fetch_landcover` → grid [1800,1200], 1 block).
++49 tests (`test_resampling.py` 28, `test_prep.py` +12, `test_fetch.py` +3,
+`test_resources_prompts.py` +1). Docs: `CLAUDE.md`,
+`docs/MANUAL-HERRAMIENTAS.md`, `.env.example`.
+
+**Surface: 38 tools + 8 resources + 4 prompts. Full suite: 269 tests —
+263 pass + 6 skip** (`pytest -q`; the 6 skips are numpy helpers absent from the
+`.venv`). Restart the MCP client to load the new `resample_raster` / `plan_grid`
+schemas.
+
+Prior work: **H3 — conditional table columns resolved from model `args`
+(PR #22, merged).** `tables_from_template` and
 `check_table_vs_raster` gained an optional `args` parameter (the InVEST `args`
 dict you plan to run with). Helper `tools._table_conditions` maps each table
 column's string `required` condition (NDR's `calc_n` / `calc_p`, etc.) to a
@@ -26,10 +80,6 @@ Docs updated (`CLAUDE.md` tool table + structure notes, `MANUAL-HERRAMIENTAS.md`
 Also in PR #22: tree cleanup — `.claude/settings.json` and `_suite_test/` added
 to `.gitignore`, `PROJECT-STATE.md` bumped to rev 11.
 
-**Full suite: 220 tests — 214 pass + 6 skip** (`pytest -q`; the 6 skips are
-numpy helpers absent from the `.venv`). Restart the MCP client to load the new
-`args` parameter.
-
 Prior work: **`docs/MANUAL-HERRAMIENTAS.md` (PR #20, merged)** — a help-style
 reference (Spanish) for the full MCP surface: **36 tools, 7 resources, 4
 prompts**. Per-tool fiche in 11 groups (signature, parameter table with
@@ -42,10 +92,11 @@ states, `provenance.json`, datastack, the 3 envs) + a typical-flow ASCII diagram
 tool changes.**
 
 **Everything below is committed & merged into `main`** — the 11-branch data-prep
-stack plus PRs #14–#22 (coefficient KB, `check_table_vs_raster` +
+stack plus PRs #14–#23 (coefficient KB, `check_table_vs_raster` +
 `fill_biophysical_table`, `recommend_model` + `invest://model-guide`,
 `clone_job`, `build_report`, `aggregate_to_units`, the manual, PR #21
-`results_suffix` fixes, PR #22 H3). `main` is at `a72c138`; `gh` CLI is NOT
+`results_suffix` fixes, PR #22 H3, PR #23 resampling + block mosaic). `main` is
+at `451ad7c`; `gh` CLI is NOT
 installed — merges go through the GitHub REST API with the git credential-manager
 token, branch deletes via the REST API (`DELETE /git/refs/heads/<branch>`) or
 `git push origin --delete`. Working tree clean.
@@ -262,7 +313,7 @@ SDK: `mcp` 2.x — `FastMCP` was renamed to `MCPServer`
   writes a numpy JSON first and renders the image in a separate process that can
   crash without taking the run down. Images render fine on Workbench/CI/Linux.
 
-## Tool surface — 36 MCP tools (+ 7 resources, 4 prompts)
+## Tool surface — 38 MCP tools (+ 8 resources, 4 prompts)
 
 Env/discovery: `invest_env`, `allow_input_dir`.
 Model introspection: `list_invest_models`, `describe_invest_model`,
@@ -282,7 +333,11 @@ Data prep (`invest-geo` subprocess unless noted): `scaffold_project` (stdlib),
 (ESA WorldCover), `fetch_climate` (WorldClim precip + Hargreaves ETo),
 `fetch_soil` (SoilGrids 2.0: texture / hydrologic soil group / USLE K;
 SoilGrids 2017: depth_to_bedrock), `fetch_hydrography` (HydroSHEDS v1
-rivers / basins), `reproject_layer`, `clip_to_aoi`, `align_raster_stack`,
+rivers / basins), `reproject_layer`, `clip_to_aoi`, `resample_raster` (change
+the pixel without clipping — match a `target_resolution` or a `reference`),
+`plan_grid` (headers only → recommend the analysis grid, flag layers upsampled
+≥2×), `align_raster_stack` (per-raster method with `resampling="auto"` → a mixed
+categorical+continuous stack aligns in one pass),
 `delineate_watersheds` (pygeoprocessing D8), `tables_from_template`
 (biophysical-table skeleton from LULC + MODEL_SPEC), `check_table_vs_raster`
 (validate a *filled* table: coverage vs raster classes, columns, cells, hard
@@ -295,7 +350,9 @@ Calibration: `validate_calibration_config`, `run_calibration`,
 Resources: `invest://models`, `invest://model/{id}/cheatsheet`,
 `invest://conventions`, `invest://data-sources`, `invest://model-guide`
 (which model answers which question — curated, per model answers/needs/gives/
-pair/not-for, by domain + out-of-scope), `invest://coefficients`
+pair/not-for, by domain + out-of-scope), `invest://resampling` (the method ×
+categorical/continuous × up/down matrix + glossary + how to pick the analysis
+grid), `invest://coefficients`
 (cited-coefficient KB index), `invest://coefficients/{name}` (one parameter file
 / `sources` / `readme` / a worked profile).
 Prompts: `prepare_and_run_model`, `compare_land_use_scenarios`,
@@ -373,8 +430,13 @@ documents conditionals in the description.
   - `scaffold_project` — project tree (`data/{raw,processed}`, `tables`,
     `datastacks`, `jobs`, `logs`) + `project.json`; trusts root for the session.
     New write-sandbox `sandbox.resolve_output_path`.
-  - `reproject_layer` / `clip_to_aoi` / `align_raster_stack` — `geo/prep.py` ops
-    (raster + vector); align grid from a reference raster or crs+res+extent.
+  - `reproject_layer` / `clip_to_aoi` / `resample_raster` / `plan_grid` /
+    `align_raster_stack` — `geo/prep.py` ops (raster + vector); align grid from a
+    reference raster or crs+res+extent. Raster ops warp via
+    `geo/resampling.py::warp_raster` (`gdal.Warp` streaming, RAM-bounded,
+    TILED+overviews); the method comes from `choose_resampling` (categorical /
+    continuous × up/down matrix), decided **per raster** for `align_stack`.
+    `clip` cleans the cutline (`make_valid` + `unary_union`) first.
   - `delineate_watersheds` — `geo/hydro.py`, full **pygeoprocessing** D8 chain
     (fill_pits → flow_dir_d8 → flow_accum → extract_streams_d8 → snap outlets →
     delineate_watersheds_d8). Same engine InVEST uses. Outlet basin area matched
@@ -385,6 +447,10 @@ documents conditionals in the description.
   - `fetch_dem` / `fetch_landcover` — `geo/fetch.py`, public AWS buckets via GDAL
     `/vsicurl/`, no credentials (Copernicus GLO-30 1° tiles; ESA WorldCover 3°
     tiles). Shared `_download_layer` + `reproject_clip_describe`.
+    `_download_layer` assembles the mosaic **block by block** (`_mosaic_grid` +
+    a windowed `rio_merge(bounds=…)` loop, `INVEST_MCP_FETCH_BLOCK_PX` px/side,
+    default 4096) → peak RAM = one block for any AOI (ported from the user's
+    `FUNCTIONS/worldcover.py` after a continental-scale OOM).
   - `fetch_climate` — `geo/climate.py`, WorldClim v2.1 via `/vsizip//vsicurl/`,
     no auth. `precipitation` (prec members) or `eto` (Hargreaves-Samani from
     tmin/tmax/tavg + analytic Ra). monthly (`{month}` placeholder, 12 files) or
@@ -549,7 +615,15 @@ Qwen). **Rev 9→10:** `aggregate_to_units` `[tool]` (#36) + `geo/aggregate.py`
 (PR #19) — zonal roll-up of service rasters / `compare_scenarios` diffs to
 reporting-unit polygons with a flat per-unit valuation. **Rev 10→11:**
 `docs/MANUAL-HERRAMIENTAS.md` (PR #20) — help-style reference for all 36 tools +
-7 resources + 4 prompts.
+7 resources + 4 prompts. **Rev 11→12:** H3 — `tables_from_template` /
+`check_table_vs_raster` take an optional `args` dict that resolves the
+MODEL_SPEC's conditional columns (True = hard-required, False = dropped, absent =
+advisory) (PR #22). **Rev 12→13:** resampling-aware prep — `geo/resampling.py`
+(`choose_resampling` matrix + `warp_raster` `gdal.Warp` streaming) rewires
+`prep.py`; new `resample_raster` / `plan_grid` tools + `invest://resampling`
+resource; block-tiled mosaic in `geo/fetch.py` (`_mosaic_grid` + windowed
+`rio_merge` loop, `INVEST_MCP_FETCH_BLOCK_PX`) → peak RAM = one block (PR #23).
+**38 tools + 8 resources + 4 prompts; 269 tests (263 pass + 6 skip).**
 
 **Still open** (CLAUDE.md §6 has the full tagged list):
 1. More `fetch_*`: `fetch_soil` PAWC (SoilGrids 2017 `AWCh1..3`/`WWP`) +
@@ -574,10 +648,10 @@ reporting-unit polygons with a flat per-unit valuation. **Rev 10→11:**
    multi-objective (Pareto), GLUE/DREAM uncertainty, regionalization.
 8. Merge the plugin PR to `main`, then flip `INVEST_MCP_CAL_PLUGIN_SPEC` /
    `environment-cal.yml` off `@refactor/shared-core`.
-9. Fine-tuning: chunking in `geo/prep.py` / `geo/fetch.py` / `geo/compare.py` for
-   huge rasters (they read whole bands / mosaic in memory); populate
-   `project.json`'s `datasets: []` from the fetch/prep routines; nested
-   subwatersheds (`pygeoprocessing.routing.calculate_subwatershed_boundary`).
+9. Fine-tuning: chunking in `geo/compare.py` for huge rasters (still reads whole
+   bands to write the diff — `geo/prep.py` and `geo/fetch.py` are done, rev
+   12→13); populate `project.json`'s `datasets: []` from the fetch/prep routines;
+   nested subwatersheds (`pygeoprocessing.routing.calculate_subwatershed_boundary`).
 
 ## Tooling meta (this session, 2026-08-30)
 
