@@ -88,6 +88,43 @@ def test_worldcover_legend_has_eleven_classes():
 
 
 # ---------------------------------------------------------------------------
+# block-tiled mosaic grid (peak RAM = one block, ported from FUNCTIONS/)
+# ---------------------------------------------------------------------------
+def test_fetch_block_px_default_and_override(monkeypatch):
+    monkeypatch.delenv("INVEST_MCP_FETCH_BLOCK_PX", raising=False)
+    assert fetch._fetch_block_px() == 4096
+    monkeypatch.setenv("INVEST_MCP_FETCH_BLOCK_PX", "2048")
+    assert fetch._fetch_block_px() == 2048
+    monkeypatch.setenv("INVEST_MCP_FETCH_BLOCK_PX", "10")     # floored to 256
+    assert fetch._fetch_block_px() == 256
+    monkeypatch.setenv("INVEST_MCP_FETCH_BLOCK_PX", "junk")
+    assert fetch._fetch_block_px() == 4096
+
+
+def test_mosaic_grid_rounds_up_and_never_clips():
+    # 1 degree bbox at 30 m (1/3600 deg) -> 3600 px, origin at NW corner
+    w, h, (west, north) = fetch._mosaic_grid([16.0, -13.0, 17.0, -12.0],
+                                             1 / 3600, 1 / 3600)
+    assert (w, h) == (3600, 3600)
+    assert (west, north) == (16.0, -12.0)
+
+    # non-integer multiple must round *up* so the last row/col is covered
+    w, h, _ = fetch._mosaic_grid([0.0, 0.0, 1.0, 1.0], 0.3, 0.3)
+    assert (w, h) == (4, 4)
+
+
+def test_mosaic_grid_block_walk_tiles_the_whole_grid():
+    # a grid bigger than one block must split into >1 blocks with no gaps
+    w, h, _ = fetch._mosaic_grid([0.0, 0.0, 3.0, 2.0], 3 / 12000, 3 / 12000)
+    assert (w, h) == (12000, 8000)
+    block = 4096
+    seen_w = sum(min(block, w - c) for c in range(0, w, block))
+    seen_h = sum(min(block, h - r) for r in range(0, h, block))
+    assert seen_w == w and seen_h == h
+    assert len(range(0, w, block)) == 3 and len(range(0, h, block)) == 2
+
+
+# ---------------------------------------------------------------------------
 # payload building
 # ---------------------------------------------------------------------------
 @pytest.fixture()

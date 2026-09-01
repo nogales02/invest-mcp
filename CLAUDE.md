@@ -110,14 +110,15 @@ src/invest_mcp/
     artifacts.py     catálogo de ficheros de salida (path, kind, size)
     report.py        render(payload) → memo markdown de métodos + resultados (overview, params, provenance con sha256, outputs, results desde summary.json, figuras, sección de comparación) — stdlib puro, solo colaciona y formatea. Lo usa la tool build_report
   geo/
-    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_align_stack/run_raster_classes + run_delineate_watersheds + run_aggregate_to_units + run_fetch_dem/run_fetch_landcover/run_fetch_climate/run_fetch_soil/run_fetch_hydrography; subproceso al env invest-geo
+    client.py        (server-side) build_payload/run_preflight + plan_rasters/run_summary + plan_comparison/run_comparison + _run_geo_worker (genérico) → _run_prep/run_reproject/run_clip/run_resample/run_align_stack/run_plan_grid/run_raster_classes + run_delineate_watersheds + run_aggregate_to_units + run_fetch_dem/run_fetch_landcover/run_fetch_climate/run_fetch_soil/run_fetch_hydrography; subproceso al env invest-geo
     preflight.py     (CORRE EN invest-geo) lee JSON de stdin, chequea CRS/overlap/pixel
     summarize.py     (CORRE EN invest-geo) stats por ráster + zonal sobre AOI + escribe summary.json
     compare.py       (CORRE EN invest-geo) alinea escenario->baseline, ráster diferencia + delta stats + zonal + escribe compare.json
     aggregate.py     (CORRE EN invest-geo) aggregate_to_units: roll-up zonal de 1+ rásters de servicio (o `diff_*.tif` de compare_scenarios) a polígonos de unidades (municipios/predios/intervención); por unidad×ráster stats sum|mean|count|min|max|std|median + `val_<label>` = value_per_unit·sum (sum area-weighted por ha si area_weighted, se ignora en CRS geográfico); reescribe el vector de unidades con una columna por (ráster, stat) + CSV tidy + `<dst>_aggregate.json`. Reusa `summarize._jsonable` + `prep._describe_vector`
-    prep.py          (CORRE EN invest-geo) rutinas deterministas: op=reproject|clip|align_stack|raster_classes (raster+vector); lee JSON de stdin, escribe salidas + describe cada capa
+    prep.py          (CORRE EN invest-geo) rutinas deterministas: op=reproject|clip|resample|align_stack|plan_grid|raster_classes (raster+vector); lee JSON de stdin, escribe salidas + describe cada capa. Los ops ráster warpean por `resampling.warp_raster` (gdal.Warp streaming, RAM acotada, salida TILED+DEFLATE+overviews) en vez de leer la banda entera. `resample` = cambia el píxel (y opcional CRS) sin recortar, casa `target_resolution` o el spacing de un `reference`. `align_stack` decide el método **por ráster** (`resampling="auto"`) → un stack mixto categórico+continuo ya no necesita dos pasadas; item con `resampling`/`categorical` manda. `plan_grid` = solo cabeceras, recomienda malla de análisis (capa categórica más fina = LULC) + marca capas que se upsamplearían ≥2×
+    resampling.py    (núcleo puro al cargar; osgeo/numpy dentro de funciones) el "qué método": `choose_resampling(categorical, src_res_m, dst_res_m, explicit)` → matriz categórico/continuo × up/down (cat down=`mode`, cat up/same=`nearest`, cont down=`average`, cont up/same=`bilinear`); `explicit` se respeta pero se avisa si pelea con el dato. `scale_direction` (ratio 1.5), `normalize_method` (nombres rasterio/friendly → gdal.Warp). El "cómo": `warp_raster` (gdal.Warp multihilo, `warpMemoryLimit`+`GDAL_CACHEMAX`, overviews), `classify_raster` (probe decimado ≤512px → categorical si int y ≤64 clases distintas), `raster_header` (metadata, cero píxeles)
     hydro.py         (CORRE EN invest-geo) delineación de cuencas: pygeoprocessing fill_pits→flow_dir_d8→flow_accum→extract_streams_d8→snap outlets→delineate_watersheds_d8; escribe el vector de cuencas + intermedios en `<dst_stem>_hydro/`
-    fetch.py         (CORRE EN invest-geo, TOCA RED) op=dem|landcover: descarga de buckets AWS públicos vía GDAL `/vsicurl/` (sin auth) — dem=Copernicus GLO-30 (`copernicus-dem-30m`, tiles 1°), landcover=ESA WorldCover 10m 2020/2021 (`esa-worldcover`, tiles 3°, +class_legend). `_download_layer` mosaica; `reproject_clip_describe` = cola común (reproyecta/recorta vía `prep`, describe) — la reusa `climate.py`
+    fetch.py         (CORRE EN invest-geo, TOCA RED) op=dem|landcover: descarga de buckets AWS públicos vía GDAL `/vsicurl/` (sin auth) — dem=Copernicus GLO-30 (`copernicus-dem-30m`, tiles 1°), landcover=ESA WorldCover 10m 2020/2021 (`esa-worldcover`, tiles 3°, +class_legend). `_download_layer` mosaica **por bloques** (`_mosaic_grid` + `_fetch_block_px`, def 4096 px/lado, env `INVEST_MCP_FETCH_BLOCK_PX`): recorre la malla de salida en tiles, cada bloque `rio_merge(bounds=)` + escritura por ventana → peak RAM = un bloque sea cual sea el AOI (portado de `FUNCTIONS/worldcover.py` tras un OOM real a escala continental). `reproject_clip_describe` = cola común (reproyecta/recorta vía `prep` → ahora warp streaming, describe) — la reusa `climate.py`. Devuelve además `mosaic_blocks`/`mosaic_grid`
     climate.py       (CORRE EN invest-geo, TOCA RED) precip/ETo de **WorldClim v2.1** (climatología mensual, sin auth, `/vsizip//vsicurl/`): variable=precipitation (`prec`, mm) | eto (Hargreaves-Samani desde `tmin/tmax/tavg` + Ra por latitud/DOY). period=monthly (12 ficheros, `{month}` en dst) | annual (suma). resolution 10m..30s
     soil.py          (CORRE EN invest-geo, TOCA RED) suelo de **SoilGrids 2.0** (ISRIC, 250 m, sin auth, VRT global vía `/vsicurl/` + `WarpedVRT` IGH→EPSG:4326, ventana al bbox): variable=texture (sand/silt/clay %, `{fraction}` en dst) | hydrologic_soil_group (HSG 1..4 derivado del triángulo textural USDA — aprox. solo-textura) | usle_k (K por Williams/EPIC 1995 desde sand/silt/clay/SOC → SI ×0.1317) | depth_to_bedrock (**SoilGrids 2017** BDTICM, GeoTIFF global ya en EPSG:4326, cm→mm para AWY `depth_to_root_rest_layer`). depth 0-5cm..100-200cm; stat mean/Q0.05/Q0.5/Q0.95. Reusa `fetch.reproject_clip_describe`
     hydrography.py   (CORRE EN invest-geo, TOCA RED) hidrografía de **HydroSHEDS v1** (sin auth): product=rivers (HydroRIVERS v1.0, líneas) | basins (HydroBASINS v1c standard, polígonos, level 1..12). Lee el shapefile del zip remoto vía GDAL `/vsizip//vsicurl/` + filtro bbox (índice `.sbn` → transferencia local; `CPL_VSIL_CURL_USE_HEAD=NO` porque el server bloquea HEAD). region auto-detectada del centroide del AOI contra 9 envolventes continentales (af ar as au eu gr na sa si); centroide ambiguo → pide region=. clip_to_aoi por defecto False (features enteras que intersectan). driver por extensión del dst
@@ -126,8 +127,8 @@ src/invest_mcp/
     client.py        (server-side) CalibrationRunner: job + subproceso al env invest-cal
     worker.py        (CORRE EN invest-cal) lee JSON, llama invest_calibration_assistant.core
   provenance.py      provenance.json por run: versiones + sha256 de cada input
-  tools.py           las 36 tools MCP + register(server); helpers `_choose_table_arg` + `_table_conditions` (tables_from_template / check_table_vs_raster: `_table_conditions` resuelve `{cond: bool}` de las columnas condicionales contra el dict `args` que se pasa, solo para las condiciones nombradas como clave en `args` — H3: NDR `calc_n`/`calc_p` → exige/descarta `load_type_n`/`load_type_p` etc.), `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff), `_aggregate_raster_specs` (aggregate_to_units: normaliza el arg `rasters` = path | dict | lista → specs con label slug+dedup + value_per_unit por ráster con default global), `_load_json`
-  resources.py       7 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, guía de modelos = qué modelo responde a qué pregunta, base de coeficientes citados + sus ficheros) + register(server)
+  tools.py           las 38 tools MCP + register(server); helpers `_choose_table_arg` + `_table_conditions` (tables_from_template / check_table_vs_raster: `_table_conditions` resuelve `{cond: bool}` de las columnas condicionales contra el dict `args` que se pasa, solo para las condiciones nombradas como clave en `args` — H3: NDR `calc_n`/`calc_p` → exige/descarta `load_type_n`/`load_type_p` etc.), `_clone_args` (clone_job: aplica drop_args + overrides sobre los args del datastack, devuelve args + diff), `_aggregate_raster_specs` (aggregate_to_units: normaliza el arg `rasters` = path | dict | lista → specs con label slug+dedup + value_per_unit por ráster con default global), `_load_json`
+  resources.py       8 resources MCP (catálogo de modelos, cheat-sheet por modelo, convención de carpetas, catálogo de fuentes de datos, guía de modelos = qué modelo responde a qué pregunta, guía de resampling, base de coeficientes citados + sus ficheros) + register(server)
   prompts.py         4 prompts/playbooks MCP (prepare_and_run_model, compare_land_use_scenarios, fill_biophysical_table, recommend_model) + register(server)
   knowledge/
     __init__.py      paquete de DATOS de referencia (nunca lógica): base de coeficientes citados
@@ -176,7 +177,7 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 
 ---
 
-## 4. Tool surface (36 tools) + 7 resources + 4 prompts
+## 4. Tool surface (38 tools) + 8 resources + 4 prompts
 
 | Tool | Para qué |
 |---|---|
@@ -204,9 +205,11 @@ en `Y:\Server-UserFolder\Escritorio\Invest_Plugin_Calibration`.
 | `fetch_hydrography(dst_path, product, aoi_path="", bbox=None, source="hydrosheds", region="", level=8, target_crs="", clip_to_aoi=False, buffer_deg=0.05, keep_intermediate=False)` | **TOCA RED.** Hidrografía de **HydroSHEDS v1** (WWF/McGill, sin auth, contacta `data.hydrosheds.org`). `product`: `rivers` (HydroRIVERS v1.0 — líneas con `DIS_AV_CMS`, `UPLAND_SKM`, orden Strahler, topología `NEXT_DOWN`) · `basins` (HydroBASINS v1c standard — polígonos, `level` Pfafstetter `1..12`, def 8). Lee el shapefile del zip remoto vía `/vsizip//vsicurl/` + filtro bbox (índice `.sbn`). `region` (`af ar as au eu gr na sa si`) en blanco = auto-detección por el centroide del AOI; centroide ambiguo (p.ej. Oriente Medio) → error pidiendo `region=`. `clip_to_aoi=False` (def) = features enteras que intersectan el bbox; `True` = `gpd.clip` geométrico. Driver por extensión de `dst_path` (`.gpkg`/`.shp`/`.geojson`). Necesita `invest-geo`. |
 | `scaffold_project(root, name="", target_crs="", aoi_path="", overwrite=False)` | Crea el árbol de "proyecto InVEST" (`data/raw`, `data/processed`, `tables`, `datastacks`, `jobs`, `logs`) + `project.json` (nombre, CRS objetivo, AOI, `datasets: []`). Añade `root` a la allow-list de la sesión (lecturas y **escrituras**). Idempotente; `overwrite` solo reescribe el `project.json`. No necesita `invest-geo`. |
 | `project_readiness(root, models=None)` | Escanea `data/` + `tables/` del proyecto, adivina el rol de cada fichero por su nombre (`dem`, `lulc`, `watersheds`, `biophysical_table`…) y lo casa contra los inputs **required** de cada modelo. Devuelve `inventory`, `assessments` (por modelo: `matched` / `ambiguous` / `missing` / `needs_values`), `ready_to_attempt`, `gaps_by_model` y un digest NL. **Apoya** la decisión de qué correr, no la toma. Los inputs numéricos/opción van en `needs_values`, no bloquean. No necesita `invest-geo`. |
-| `reproject_layer(src_path, dst_path, target_crs, resampling="nearest", resolution=None)` | Reproyecta un ráster o vector a `target_crs` (EPSG/WKT/proj). `resampling` (solo ráster): `nearest` para categóricos (land cover), `bilinear`/`cubic`/`average` para continuos. `resolution` `[x,y]` opcional = tamaño de píxel objetivo. Necesita `invest-geo`. |
+| `reproject_layer(src_path, dst_path, target_crs, resampling="auto", resolution=None)` | Reproyecta un ráster o vector a `target_crs` (EPSG/WKT/proj). `resampling` (solo ráster) `"auto"` = elige por tipo de dato (categórico/continuo, sondeado) y cambio de escala; método explícito manda pero se avisa si pelea con el dato. `resolution` `[x,y]` opcional = píxel objetivo. Warp por `gdal.Warp` (RAM acotada, salida TILED+overviews). Necesita `invest-geo`. |
+| `resample_raster(src_path, dst_path, target_resolution=None, reference_path="", method="auto", categorical=None, target_crs="")` | Cambia el píxel de un ráster **sin recortar**: casa `target_resolution` `[x,y]` o el spacing de `reference_path`. `method="auto"` → cat downsample=`mode`, cat up/same=`nearest`, cont downsample=`average`, cont up/same=`bilinear`. `categorical` fuerza el probe. `target_crs` reproyecta a la vez. Streaming `gdal.Warp`. Necesita `invest-geo`. |
+| `plan_grid(rasters, reference_path="", target_crs="")` | **Solo cabeceras, no escribe.** Recomienda malla de análisis para un stack: por capa CRS/píxel nativo/extent + categórico vs continuo; malla objetivo = capa categórica más fina (= LULC) o `reference_path`. Marca cada capa que se upsamplearía ≥2× (sin ganar detalle) + ballpark de celdas/MB. Alimenta `align_raster_stack`/`resample_raster`. Necesita `invest-geo`. |
 | `clip_to_aoi(src_path, dst_path, aoi_path, all_touched=False)` | Recorta un ráster (crop al bbox del AOI + máscara) o vector (`gpd.clip`) al polígono de `aoi_path`. El AOI se reproyecta al CRS de la capa. Necesita `invest-geo`. |
-| `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")` | Pone varios rásters en **una malla idéntica** (mismo CRS + tamaño de píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`. Malla **o** desde `reference_path` (un ráster) **o** desde `target_crs`+`resolution`+`extent` juntos. `resampling` se aplica a todos (correr dos veces si mezcla categóricos y continuos). Necesita `invest-geo`. |
+| `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="auto")` | Pone varios rásters en **una malla idéntica** (mismo CRS + píxel + extent + alineación) para que InVEST los apile. `rasters` = lista de `{"src","dst"}`, cada item puede llevar `"resampling"`/`"categorical"`. Malla desde `reference_path` **o** `target_crs`+`resolution`+`extent`. `resampling="auto"` decide **por ráster** → un stack mixto categórico+continuo ya **no** necesita dos pasadas; método explícito fuerza todos, el del item manda. Cada salida reporta `resampling` + `resampling_note`. Streaming `gdal.Warp`. Necesita `invest-geo`. |
 | `delineate_watersheds(dem_path, outlets_path, dst_path, threshold_flow_accumulation=1000, snap_distance_px=10, fill_pits=True, keep_intermediate=False)` | Corta polígonos de cuenca aguas arriba de puntos de salida con la cadena D8 de **pygeoprocessing** (mismo motor que InVEST → las cuencas cuadran con el routing de SDR/NDR/SWY): fill_pits → flow_dir_d8 → flow_accum → streams (umbral en px) → snap de cada outlet a la red → `delineate_watersheds_d8`. Reproyecta los outlets al CRS del DEM. Escribe `.gpkg`/`.shp`/`.geojson`; intermedios en `<dst_stem>_hydro/` (se borran salvo `keep_intermediate`). `snap_distance_px=0` desactiva el snap. Devuelve descripción del vector + `snap_report` por punto. Necesita `invest-geo`. |
 | `tables_from_template(model_id, lulc_path, dst_path, table_arg="", legend_path="", include_optional=True, args=None, max_classes=1000)` | Esqueleto de tabla biofísica/lookup de un modelo: una fila por lucode único del LULC + las columnas que pide su MODEL_SPEC (celdas de coeficiente en blanco). `table_arg` = qué CSV templetar (auto-detecta el que va por `lucode`; si hay varios, el error los lista). `legend_path` (CSV `code,label`) → añade columna `description`. `args` (el dict `args` del run) resuelve las columnas **condicionales**: `{"calc_n": true, "calc_p": false}` → emite `load_type_n`/`load_n`/… como `required` y descarta las de fósforo; sin `args` todas salen `required if: <cond>`. Expande `[MONTH]`→`_1..12` y `[SOIL_GROUP]`→`_a..d`; otros `[TOKEN]` quedan literales con nota. Devuelve `headers`, `column_help` (about/units/requirement por columna), `classes` (valor+px), `resolved_conditions`, `narrative`. Necesita `invest-geo` (lee las clases del ráster). |
 | `check_table_vs_raster(model_id, table_path, lulc_path="", table_arg="", include_optional=True, args=None, max_classes=1000)` | Valida una tabla biofísica/lookup **rellena** antes de correr. `checks`: `coverage` (con `lulc_path`: clases del ráster sin fila = `missing_rows`; filas para códigos ausentes = `orphan_rows`; claves duplicadas), `columns` (`missing` required, `unexpected` extras — solo se validan celdas de columnas que el modelo consume), `cells` (`empty_required`, `non_numeric`), `ranges` (`invariant_violations` duras: fracciones ∈ [0,1], curve numbers ordenados A≤B≤C≤D ∈ (0,100], loads/depths ≥ 0, root_depth entero · `out_of_typical` blandas: fuera de la banda citada del KB, con el `resource` fuente). `args` (el dict `args` del run) resuelve las columnas condicionales: con `{"calc_n": true}` `load_type_n`/`load_n`/`eff_n`/`crit_len_n`/`proportion_subsurface_n` pasan a required duras (faltan → `missing`, en blanco → `empty_required`); con `{"calc_p": false}` las de fósforo se ignoran; condiciones no nombradas quedan en `conditional_columns`. `enforced_conditions` lista las activadas. `severity` = `error` (bloqueante) \| `warning` (revisar) \| `ok`; `pass` = `severity != error`. `lulc_path` opcional (sin él: solo estructura + valores, no necesita `invest-geo`). Cierra `tables_from_template` → rellenar desde `invest://coefficients` → `check_table_vs_raster` → `validate_invest_args`. |
@@ -230,6 +233,12 @@ tool; solo datos, nunca decisiones:
   y hábitat, urbano, costero/marino, agricultura, recreación, herramientas de
   terreno) + qué queda fuera del alcance de InVEST. Mapa de partida para
   `recommend_model`; confirmar contra el cheat-sheet.
+- `invest://resampling` — guía markdown: la matriz método × (categórico/continuo)
+  × (upsample/downsample) — cat down `mode`, cont down `average`, etc. —,
+  glosario de métodos de `gdal.Warp`, y cómo elegir la **malla de análisis**
+  (InVEST corre en la del LULC) antes de `align_raster_stack`: `plan_grid` →
+  no upsamplear una capa gruesa solo para casar una fina. Los tools de prep van
+  a `"auto"`.
 - `invest://coefficients` — índice de la base de coeficientes citados: por
   parámetro (resource, aka, models, invest_column, units, definition,
   record_count, source_keys), profiles, cómo elegir, bibliografía.
@@ -275,10 +284,51 @@ Convenciones:
 Sesión larga añadiendo la **capa de preparación de datos** (roadmap §6 puntos
 8–10) + el hand-off con el Workbench. Todo verificado end-to-end contra
 `Dummy_InVEST` o un bbox de los Alpes.
-**36 tools + 7 resources + 4 prompts. 220 tests en verde** (`pytest -q`, 214
+**38 tools + 8 resources + 4 prompts. 269 tests en verde** (`pytest -q`, 263
 pass + 6 skip sin numpy).
 
-**Última sesión (2026-08-31, cont.) — H3:** `tables_from_template` y
+**Última sesión (2026-08-31, cont.) — mosaico por bloques en `fetch.py`:**
+port del bucle de bloques de `FUNCTIONS/worldcover.py` (el usuario lo pidió tras
+ver que la solución suya era mejor para el *fetch*). `_download_layer` ya no hace
+`rio_merge` de todo el bbox a un array; `_mosaic_grid(bbox, rx, ry)` fija la
+malla nativa EPSG:4326 y el bucle la recorre en bloques de
+`_fetch_block_px()` px/lado (def 4096 ≈ 16 MB uint8 / 64 MB float32, env
+`INVEST_MCP_FETCH_BLOCK_PX`): cada bloque `rio_merge(srcs, bounds=<sub-bbox>,
+res=nativa)` (rangos HTTP de los COG) + `out.write(band, window=...)` → **peak
+RAM = un bloque** sea cual sea el AOI. Salida TILED 512. La cola
+(`reproject_clip_describe` → `_op_reproject`/`_op_clip`) ya iba por `gdal.Warp`
+streaming, así que **todo el fetch está acotado en RAM**. Respuesta trae
+`mosaic_blocks`/`mosaic_grid`. Verificado end-to-end (.venv → invest-geo →
+bucket AWS): `fetch_dem` Alps con `INVEST_MCP_FETCH_BLOCK_PX=400` → `mosaic_grid
+[540,360]`, `mosaic_blocks 2`, salida 398×381 @ 30 m UTM 32N sin costuras;
+`fetch_landcover` mismo bbox → grid [1800,1200], 1 bloque, 1193×1144 Byte
+nodata 0. +6 tests (`test_fetch.py`: `_fetch_block_px` env, `_mosaic_grid`
+redondeo/cobertura, walk multi-bloque sin huecos). Sin commitear.
+
+**Sesión previa (2026-08-31, cont.) — resampling:** hueco que señaló el usuario:
+el resampling estaba como parámetro suelto (`resampling="nearest"` por defecto)
+sin lógica ni guía, y los ops ráster de `prep.py` leían la banda entera en
+memoria. Nuevo `geo/resampling.py`: (a) **el qué** — `choose_resampling` con la
+matriz categórico/continuo × up/down (cat down=`mode`, cont down=`average`, etc.),
+`explicit` se respeta pero se avisa si pelea con el dato; puro, testeable en
+`.venv`. (b) **el cómo** — `warp_raster` = `gdal.Warp` streaming (multihilo,
+`warpMemoryLimit`+`GDAL_CACHEMAX`, salida TILED+DEFLATE+overviews), RAM acotada
+sea cual sea el tamaño; `classify_raster` (probe decimado ≤512 px → categorical
+si int y ≤64 clases; **cazó bien un LULC Float32**), `raster_header` (cero
+píxeles). `prep.py` reescrito: `reproject`/`clip`/`align_stack` warpean por ahí;
+`align_stack` decide **por ráster** con `resampling="auto"` → stack mixto en una
+pasada. Dos ops/tools nuevos: **`resample_raster`** (cambia píxel sin recortar,
+casa `target_resolution` o un `reference`) y **`plan_grid`** (solo cabeceras →
+recomienda malla = capa categórica más fina, marca upsample ≥2×, ballpark RAM).
+Resource **`invest://resampling`**. `reproject_layer`/`align_raster_stack` pasan
+a default `"auto"`. Verificado end-to-end en invest-geo con `Dummy_InVEST`:
+LULC→300 m = `mode` (clases {10..80} intactas), DEM→300 m = `average`,
+align_stack [LULC,DEM] ref=DEM → malla idéntica 362×520, LULC=`near`+DEM=`bilinear`
+en una pasada; salidas DEFLATE+tiled+overviews. +46 tests (`test_resampling.py`
+28, `test_prep.py` +12, `test_resources_prompts.py` +1, payload/guard rails).
+Sin commitear.
+
+**Sesión previa (2026-08-31, cont.) — H3:** `tables_from_template` y
 `check_table_vs_raster` toman un `args` opcional (el dict `args` del run) y
 resuelven las columnas **condicionales** del MODEL_SPEC contra él vía el helper
 `_table_conditions`. Motivación: la suite test vio que una tabla biofísica de
@@ -383,7 +433,7 @@ conflictos): `data-prep-routines` (scaffold + reproject/clip/align) →
 **Cadena de preparación ya montada** (todas las tools existen y están
 verificadas): `scaffold_project` →
 `fetch_dem`/`fetch_landcover`/`fetch_climate`/`fetch_soil`/`fetch_hydrography` →
-`reproject_layer`/`clip_to_aoi`/`align_raster_stack` → `delineate_watersheds`
+`plan_grid` → `reproject_layer`/`clip_to_aoi`/`resample_raster`/`align_raster_stack` → `delineate_watersheds`
 → `tables_from_template` → `project_readiness` →
 `import_datastack`/`export_datastack` (round-trip Workbench) →
 `validate_invest_args` → `run_invest_model` →
@@ -621,8 +671,10 @@ regiones/biomas, glosario, unidades por output).
   labels, `value_per_unit` global vs override, errores) + payload building
   (`run_aggregate_to_units` stubeado) + guard rails del tool (rasters vacío,
   stat desconocido, sandbox in/out, `env_missing`, happy path con narrative).
-- 220 tests en verde (214 pass — incl. +4 de PR #21 results_suffix y +7 de H3
-  [`test_check_table` 22, `test_biotable` +2 → 12]; `test_aggregate` 15,
+- 269 tests en verde (263 pass — incl. +46 de resampling [`test_resampling` 28
+  nuevo, `test_prep` +12, `test_resources_prompts` +1] + 3 de mosaico por
+  bloques [`test_fetch` +3], +4 de PR #21
+  results_suffix y +7 de H3; `test_aggregate` 15,
   `test_report` 12, `test_clone_job` 10, `test_knowledge_coefficients` 11,
   `test_hydrography` 16, `test_datastack` 15, +2 en `test_soil`; 6 skips: helpers numpy —
   `_ra_mm_per_day`, triángulo textural, EPIC K — con numpy ausente del `.venv`;
@@ -661,14 +713,15 @@ regiones/biomas, glosario, unidades por output).
    chunking para rásters gigantes (ahora lee la banda entera para escribir el diff).
 8. **Rutinas de datos deterministas** (tools) — **PARCIAL** (2026-08-30):
    - **HECHO**: `scaffold_project` (`workspace/project.py`, stdlib) +
-     `reproject_layer` / `clip_to_aoi` / `align_raster_stack` (`geo/prep.py` en
-     invest-geo, `_run_prep`/`run_*` en `geo/client.py`). Sandbox de escritura
-     `resolve_output_path`. Verificado end-to-end (ver §5).
-   - **Pendiente**: `geo.fetch_dem`, `geo.fetch_landcover` (tocan red — decidir
-     fuentes: SRTM/Copernicus DEM, ESA WorldCover/ESRI LC), `tables.from_template`
-     (esqueleto de tabla biofísica por modelo). Afinar: chunking en `prep.py` para
-     rásters gigantes (lee la banda entera); overwrite de shapefiles; poblar
-     `datasets: []` del `project.json` desde estas rutinas.
+     `reproject_layer` / `clip_to_aoi` / `resample_raster` / `plan_grid` /
+     `align_raster_stack` (`geo/prep.py` + `geo/resampling.py` en invest-geo,
+     `_run_prep`/`run_*` en `geo/client.py`). Sandbox de escritura
+     `resolve_output_path`. **Resampling consciente** (matriz cat/cont × up/down,
+     default `"auto"`, `plan_grid` para la malla) + warp por `gdal.Warp`
+     streaming (RAM acotada) — resuelto (2026-08-31). Verificado end-to-end.
+   - **Pendiente**: overwrite de shapefiles; poblar `datasets: []` del
+     `project.json` desde estas rutinas; `fetch_*` `source=` extra (SRTM,
+     TerraClimate, ESRI LC…) y su chunking para AOIs grandes.
 9. **Playbooks** (prompts MCP) — **PARCIAL** (2026-08-31): `prepare_and_run_model`
    + `compare_land_use_scenarios` + `fill_biophysical_table` + `recommend_model`
    en `prompts.py`. Pendiente: playbook de calibración, playbook multi-servicio.
@@ -918,6 +971,9 @@ Tras cambiar tools, **reiniciar Claude Code** para que recargue el servidor MCP.
 | `INVEST_MCP_LOCALE` | — | locale InVEST (es/en/zh) |
 | `INVEST_MCP_TRANSPORT` / `_HOST` / `_PORT` | `stdio` / `127.0.0.1` / `8000` | HTTP necesita extra `[http]` |
 | `INVEST_MCP_CAL_PLUGIN_SPEC` | `... @ git+...@refactor/shared-core` | spec pip del núcleo de calibración (usado por `setup --cal`) |
+| `INVEST_MCP_FETCH_BLOCK_PX` | 4096 | lado (px de salida) del bloque de mosaico en `fetch_*` — acota RAM en AOIs grandes |
+| `INVEST_MCP_WARP_MEM_MB` | 256 | `warpMemoryLimit` de `gdal.Warp` en los ops ráster de `prep.py` / `resampling.py` |
+| `INVEST_MCP_GDAL_CACHE_MB` | 512 | `GDAL_CACHEMAX` para esos warps |
 
 Siempre permitidas para leer inputs: `DATA_ROOT` y el cwd del servidor.
 

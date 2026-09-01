@@ -406,15 +406,35 @@ def run_clip(src: str, dst: str, aoi: str, settings: Settings, *,
                       "kind": kind, "all_touched": all_touched}, settings)
 
 
+def run_resample(src: str, dst: str, settings: Settings, *,
+                 target_resolution: list[float] | None = None,
+                 reference: str | None = None, target_crs: str | None = None,
+                 method: str = "auto", categorical: bool | None = None) -> dict:
+    return _run_prep({"op": "resample", "src": src, "dst": dst,
+                      "target_resolution": target_resolution,
+                      "reference": reference, "target_crs": target_crs,
+                      "method": method, "categorical": categorical}, settings)
+
+
 def run_align_stack(rasters: list[dict], settings: Settings, *,
                     reference: str | None = None, target_crs: str | None = None,
                     resolution: list[float] | None = None,
                     extent: list[float] | None = None,
-                    resampling: str = "nearest") -> dict:
+                    resampling: str = "auto") -> dict:
     return _run_prep({"op": "align_stack", "rasters": rasters,
                       "reference": reference, "target_crs": target_crs,
                       "resolution": resolution, "extent": extent,
                       "resampling": resampling}, settings)
+
+
+def run_plan_grid(rasters: list[str], settings: Settings, *,
+                  reference: str | None = None,
+                  target_crs: str | None = None) -> dict:
+    return _run_geo_worker(
+        "invest_mcp.geo.prep",
+        {"op": "plan_grid", "rasters": rasters, "reference": reference,
+         "target_crs": target_crs},
+        settings, timeout=_TIMEOUT_S, label="plan_grid")
 
 
 def run_raster_classes(src: str, settings: Settings, *, max_classes: int = 1000) -> dict:

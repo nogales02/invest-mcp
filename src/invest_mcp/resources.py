@@ -59,7 +59,8 @@ Hydrology models (SDR, NDR, SWY): fill pits / condition the DEM before use.
 | Dynamic World | 10 m, near-real-time | Google Earth Engine, per-scene probabilities. |
 | National maps | varies | Usually preferred where they exist. |
 
-Reproject land cover with **`resampling="nearest"`** (categorical).
+Land cover is categorical: reproject with `nearest`, but aggregate to a coarser
+grid with `mode`. See `invest://resampling` (the prep tools default to `"auto"`).
 
 ## Precipitation / climate
 | Source | Notes |
@@ -305,6 +306,60 @@ lands here.
 """
 
 
+_RESAMPLING_MD = """\
+# Resampling: choosing a method, and the analysis grid
+
+Every raster that gets reprojected, resampled or aligned needs a resampling
+method. It is a modelling decision, not a default -- the wrong one silently
+corrupts the layer. `reproject_layer`, `resample_raster` and `align_raster_stack`
+default to `"auto"` and apply this table; pass an explicit method to override.
+
+## The decision
+
+|                         | Target **finer** / same scale | Target **coarser** (aggregating) |
+|-------------------------|-------------------------------|----------------------------------|
+| **Categorical** (LULC, hydrologic soil group, any class raster) | `nearest` | **`mode`** (majority) -- *not* `nearest` |
+| **Continuous** (DEM, precip, ETo, K factor, slope) | `bilinear` (or `cubic`) | **`average`** (or `q1`/`med` for a robust statistic) |
+
+- Downsampling a **categorical** raster with `nearest` keeps one sub-pixel and
+  throws away the majority class -- always `mode` when the target pixel is
+  bigger.
+- Downsampling a **continuous** raster with `bilinear` samples ~4 pixels and
+  skips the rest -- `average` preserves the areal mean; `sum` if the quantity is
+  a per-pixel total (e.g. counts).
+- "Auto" treats a target within ~1.5x of the source as *same scale* (a plain
+  reprojection) and uses the finer-side method.
+
+## Method glossary (GDAL warp)
+
+`nearest` copy the closest pixel . `bilinear` / `cubic` / `cubicspline` /
+`lanczos` interpolate (continuous, refining) . `average` areal mean .
+`mode` most frequent value (categorical, aggregating) . `min` / `max` /
+`med` / `q1` / `q3` order statistics over the contributing pixels .
+`rms` root-mean-square . `sum` total (density -> count).
+
+## The analysis grid (do this first)
+
+InVEST runs at the resolution and extent of its LULC raster (some models take an
+explicit pixel size). Aligning a stack means committing to **one** grid:
+
+1. Run `plan_grid([...])` on the candidate inputs. It reports each layer's native
+   CRS / pixel size / extent, guesses categorical vs continuous, and recommends a
+   target pixel size (the finest categorical layer).
+2. Do **not** upsample a coarse layer just to match a fine one -- a 250 m soil
+   raster forced onto a 10 m grid is still 250 m of information in 10 m cells.
+   `plan_grid` flags every layer that would be upsampled >=2x. If several key
+   inputs are coarse, pick a coarser analysis grid.
+3. Then `align_raster_stack(rasters=[{src,dst}, ...], reference_path=<LULC>)`
+   (or `target_crs` + `resolution` + `extent`). With `resampling="auto"` each
+   raster in the stack gets the right method for its own data kind -- a mixed
+   categorical + continuous stack no longer needs two passes.
+
+Every output reports the `resampling` method used and a `resampling_note` when
+the choice (or a forced override) is worth a second look.
+"""
+
+
 def models_catalog() -> str:
     return json.dumps(
         {"models": [m.as_dict() for m in registry.list_models()]}, indent=2
@@ -328,6 +383,10 @@ def data_sources() -> str:
 
 def model_guide() -> str:
     return _MODEL_GUIDE_MD
+
+
+def resampling_guide() -> str:
+    return _RESAMPLING_MD
 
 
 def coefficients_index() -> str:
@@ -383,6 +442,14 @@ def register(server) -> None:
                     "A starting map for recommend_model; confirm against the "
                     "per-model cheat-sheet.",
     )(model_guide)
+    server.resource(
+        "invest://resampling",
+        name="Resampling guide",
+        mime_type="text/markdown",
+        description="How to choose a resampling method (categorical vs "
+                    "continuous x upsample vs downsample) and how to pick the "
+                    "common analysis grid before align_raster_stack.",
+    )(resampling_guide)
     server.resource(
         "invest://coefficients",
         name="Cited coefficient knowledge base",

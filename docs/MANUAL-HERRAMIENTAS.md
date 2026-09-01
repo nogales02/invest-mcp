@@ -1,7 +1,7 @@
 # Manual de herramientas — invest-mcp
 
 Referencia tipo *help* de **todo** lo que el servidor MCP pone sobre la mesa:
-**36 tools**, **7 resources** y **4 prompts**. Pensado para consultarlo mientras
+**38 tools**, **8 resources** y **4 prompts**. Pensado para consultarlo mientras
 trabajas (tú o el asistente).
 
 - ¿Instalar y conectar un cliente (Claude Desktop/Code, Ollama…)? → [`INSTALACION-PASO-A-PASO.md`](INSTALACION-PASO-A-PASO.md)
@@ -615,6 +615,11 @@ Todas: 🌐 🗺️. El área se da con `aoi_path` (un vector; sus *bounds* mand
 `0.05`) pad. `target_crs` / `target_resolution` reproyectan el resultado.
 `keep_intermediate` (def. `false`) conserva los ficheros de paso.
 
+> **Memoria.** El mosaico se arma **por bloques** (tiles de
+> `INVEST_MCP_FETCH_BLOCK_PX` px de lado, def. 4096) y la cola de
+> reproyección/recorte va por `gdal.Warp` streaming → el pico de RAM es un bloque
+> aunque el AOI sea enorme. La respuesta incluye `mosaic_blocks` / `mosaic_grid`.
+
 #### `fetch_dem(dst_path, aoi_path="", bbox=None, target_crs="", target_resolution=None, clip_to_aoi=True, buffer_deg=0.05, resampling="bilinear", source="cop30", keep_intermediate=False)`
 
 **Qué hace.** Descarga un DEM y lo deja como GeoTIFF.
@@ -734,7 +739,22 @@ contacta `data.hydrosheds.org`; rápido y fiable).
 
 Todas 🗺️. Entradas y salidas deben caer en el sandbox.
 
-#### `reproject_layer(src_path, dst_path, target_crs, resampling="nearest", resolution=None)`
+> **Resampling (léelo una vez).** Todos estos tools van a `resampling="auto"` /
+> `method="auto"`: el método se elige por el **tipo de dato** (categórico vs
+> continuo, sondeado del ráster) y el **cambio de escala** —
+>
+> | | destino más fino / igual | destino más grueso (agregar) |
+> |---|---|---|
+> | **Categórico** (LULC, HSG…) | `nearest` | **`mode`** (mayoría) — nunca `nearest` |
+> | **Continuo** (DEM, precip, K…) | `bilinear` | **`average`** |
+>
+> Pasa un método explícito para forzarlo; se respeta pero cada salida trae un
+> `resampling_note` si pelea con el dato. Detalle completo + malla de análisis en
+> el resource **`invest://resampling`**. Corre **`plan_grid` primero** para elegir
+> la resolución común. Los ráster se warpean por `gdal.Warp` (streaming, RAM
+> acotada, salida TILED+DEFLATE+overviews).
+
+#### `reproject_layer(src_path, dst_path, target_crs, resampling="auto", resolution=None)`
 
 **Qué hace.** Reproyecta un ráster **o** vector a `target_crs`.
 
@@ -745,7 +765,7 @@ Todas 🗺️. Entradas y salidas deben caer en el sandbox.
 | `src_path` | ✔ | — | Ráster o vector. |
 | `dst_path` | ✔ | — | Salida. |
 | `target_crs` | ✔ | — | EPSG (`"EPSG:32618"`), WKT o proj string. |
-| `resampling` | ✖ | `"nearest"` | Solo ráster: `nearest` para categóricos (land cover), `bilinear`/`cubic`/`average` para continuos. |
+| `resampling` | ✖ | `"auto"` | Solo ráster. `"auto"` = por tipo de dato + escala (ver recuadro). Método explícito lo fuerza. |
 | `resolution` | ✖ | `None` | Solo ráster: `[x, y]` tamaño de píxel objetivo en unidades del CRS destino. |
 
 ---
@@ -761,7 +781,42 @@ solo al CRS de la capa.
 
 ---
 
-#### `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="nearest")`
+#### `resample_raster(src_path, dst_path, target_resolution=None, reference_path="", method="auto", categorical=None, target_crs="")`
+
+**Qué hace.** Cambia el tamaño de píxel de un ráster **sin recortar**. Da el
+espaciado objetivo **o** como `target_resolution` `[x, y]` **o** como
+`reference_path` (un ráster cuyo píxel se copia).
+
+**Parámetros.**
+
+| nombre | req | por defecto | qué es |
+|---|---|---|---|
+| `src_path` / `dst_path` | ✔ | — | Entrada / salida. |
+| `target_resolution` | ✖* | `None` | `[x, y]` en unidades de `target_crs` (o del CRS de la fuente). |
+| `reference_path` | ✖* | `""` | Ráster del que copiar el espaciado. |
+| `method` | ✖ | `"auto"` | Ver recuadro (cat downsample = `mode`, cont downsample = `average`…). |
+| `categorical` | ✖ | `None` | `true`/`false` fuerza el probe automático. |
+| `target_crs` | ✖ | `""` | Reproyecta a la vez. |
+
+\* Se necesita **o** `target_resolution` **o** `reference_path`.
+
+---
+
+#### `plan_grid(rasters, reference_path="", target_crs="")`
+
+**Qué hace.** **Solo lee cabeceras, no escribe nada.** Recomienda una malla de
+análisis común para un stack antes de `align_raster_stack`. InVEST corre en la
+resolución/extent del LULC, así que alinear = elegir **una** malla a propósito.
+
+**Devuelve.** Por capa: CRS / píxel nativo / extent / categórico-o-continuo.
+`recommended_grid` = la capa categórica más fina (= LULC) o `reference_path`.
+`warnings` = cada capa que se **upsamplearía ≥2×** (no se gana detalle real —
+un ráster de suelo de 250 m forzado a 10 m sigue siendo información de 250 m).
+`estimate` = celdas y MB float32 aproximados.
+
+---
+
+#### `align_raster_stack(rasters, reference_path="", target_crs="", resolution=None, extent=None, resampling="auto")`
 
 **Qué hace.** Pone varios rásters en **una malla idéntica** (mismo CRS + píxel +
 extent + alineación) para que InVEST los apile.
@@ -770,19 +825,21 @@ extent + alineación) para que InVEST los apile.
 
 | nombre | req | por defecto | qué es |
 |---|---|---|---|
-| `rasters` | ✔ | — | Lista de `{"src": ..., "dst": ...}`. |
+| `rasters` | ✔ | — | Lista de `{"src": ..., "dst": ...}`. Cada item puede llevar `"resampling"` (método propio) y/o `"categorical"` (`true`/`false`). |
 | `reference_path` | ✖* | `""` | Un ráster cuya malla se copia exacta. |
 | `target_crs` + `resolution` + `extent` | ✖* | — | Alternativa a `reference_path`: hay que dar **los tres** (`extent` = `[minx, miny, maxx, maxy]`). |
-| `resampling` | ✖ | `"nearest"` | Se aplica a **todos**. Corre la tool dos veces si mezclas categóricos y continuos. |
+| `resampling` | ✖ | `"auto"` | `"auto"` decide **por ráster** (categórico → `nearest`/`mode`, continuo → `bilinear`/`average`) → un stack mixto **ya no** necesita dos pasadas. Método explícito fuerza todos; el del item manda. |
 
 \* Se necesita **o** `reference_path` **o** el trío `target_crs`+`resolution`+`extent`.
+
+**Devuelve.** Por ráster: la descripción + `resampling` usado + `resampling_note`.
 
 **Ejemplo.**
 ```json
 align_raster_stack(
   [{"src": ".../dem.tif", "dst": ".../processed/dem.tif"},
    {"src": ".../lulc.tif", "dst": ".../processed/lulc.tif"}],
-  reference_path=".../dem.tif")
+  reference_path=".../lulc.tif")
 ```
 
 ---
@@ -1003,6 +1060,7 @@ nunca decisiones.
 | `invest://conventions` | Markdown | El layout de "proyecto InVEST" + los campos de `project.json`. |
 | `invest://data-sources` | Markdown | Catálogo curado de fuentes abiertas y globales (DEM, land cover, clima, ETo, suelo, hidrografía, erosividad R / erodibilidad K, límites administrativos) con URLs y notas; marca cuáles ya están cableadas en un `fetch_*`. |
 | `invest://model-guide` | Markdown | Qué modelo InVEST responde a qué pregunta del mundo real, con entradas/salidas cabecera de cada uno y sus emparejamientos habituales, por dominio (agua terrestre, carbono y hábitat, urbano, costero/marino, agricultura, recreación, herramientas de terreno) + **qué queda fuera del alcance de InVEST**. Mapa de partida para `recommend_model`. |
+| `invest://resampling` | Markdown | Cómo elegir el método de resampling — matriz (categórico/continuo) × (upsample/downsample): cat downsample = `mode`, cont downsample = `average`, etc. — + glosario de métodos de `gdal.Warp` + cómo fijar la **malla de análisis** (InVEST corre en la del LULC) con `plan_grid` antes de `align_raster_stack`. Los tools de prep van a `"auto"` y aplican esta tabla. |
 | `invest://coefficients` | JSON | Índice de la **base de coeficientes citados**: por parámetro (`resource`, `aka`, `models`, `invest_column`, `units`, `definition`, `record_count`, `source_keys`), `profiles`, cómo elegir, bibliografía. |
 | `invest://coefficients/{name}` | JSON | Un fichero de la base. `{name}` ∈ `usle_c`, `usle_p`, `ndr_nutrient`, `curve_number`, `kc`, `root_depth`, `carbon_pools` (parámetros); `sources` (bibliografía verificada); `readme` (cómo elegir un valor en 5 pasos); `moorabool_fs28` (profile trabajado — **ejemplo, no defaults**). Registros indexados por atributos semánticos de cobertura (forma, densidad de dosel, condición, manejo, bioma, región, escala), **no** por una leyenda concreta; el `crosswalk` es solo orientativo. Cada valor lleva `source_key` + `confidence` + `verified`. |
 

@@ -9,14 +9,15 @@
     data prep      scaffold_project, project_readiness, fetch_dem,
                    fetch_landcover, fetch_climate, fetch_soil,
                    fetch_hydrography, reproject_layer, clip_to_aoi,
-                   align_raster_stack, delineate_watersheds,
+                   resample_raster, plan_grid, align_raster_stack,
+                   delineate_watersheds,
                    tables_from_template, check_table_vs_raster
     datastack      import_datastack, export_datastack
     admin          invest_env, allow_input_dir
 
 Plus MCP resources (invest://models, invest://model/{id}/cheatsheet,
 invest://conventions, invest://data-sources, invest://model-guide,
-invest://coefficients) and prompts (prepare_and_run_model,
+invest://resampling, invest://coefficients) and prompts (prepare_and_run_model,
 compare_land_use_scenarios, fill_biophysical_table, recommend_model) registered
 from invest_mcp.resources / .prompts.
 
@@ -1081,18 +1082,23 @@ def scaffold_project(root: str, name: str = "", target_crs: str = "",
 
 
 def reproject_layer(src_path: str, dst_path: str, target_crs: str,
-                    resampling: str = "nearest",
+                    resampling: str = "auto",
                     resolution: list[float] | None = None) -> dict[str, Any]:
     """Reproject one raster or vector to `target_crs`, writing `dst_path`.
 
     `target_crs`: EPSG code (e.g. "EPSG:32618"), WKT or proj string.
-    `resampling`: raster only -- `nearest` (default; use for categorical data
-      such as land cover), `bilinear` / `cubic` / `average` (continuous data),
-      etc.
+    `resampling`: raster only. `"auto"` (default) picks the method from the data
+      kind (categorical vs continuous, probed from the raster) and the scale
+      change: categorical -> `nearest`, or `mode` when `resolution` coarsens it;
+      continuous -> `bilinear`, or `average` when it coarsens. Pass an explicit
+      method (`nearest`/`bilinear`/`cubic`/`average`/`mode`/`q1`/...) to force it;
+      it is honoured but sanity-checked (see the `notes` in the result and
+      `invest://resampling`).
     `resolution`: raster only -- optional `[x, y]` target pixel size in the
       target CRS units; omit to keep the native resolution.
-    Both paths must sit under an allowed folder (see `scaffold_project` /
-    `allow_input_dir`). Needs the `invest-geo` conda env.
+    The raster is streamed through `gdal.Warp` (memory-bounded, tiled+compressed
+    output with overviews). Both paths must sit under an allowed folder (see
+    `scaffold_project` / `allow_input_dir`). Needs the `invest-geo` conda env.
     """
     if not target_crs or not str(target_crs).strip():
         return {"ok": False, "error": "target_crs is required"}
@@ -1104,7 +1110,7 @@ def reproject_layer(src_path: str, dst_path: str, target_crs: str,
         return {"ok": False, "error": str(exc)}
     try:
         res = geo_client.run_reproject(src, dst, str(target_crs), _SETTINGS,
-                                       resampling=resampling or "nearest",
+                                       resampling=resampling or "auto",
                                        resolution=resolution)
     except RuntimeError as exc:
         return {"ok": False, "env_missing": True, "error": str(exc)}
@@ -1136,20 +1142,97 @@ def clip_to_aoi(src_path: str, dst_path: str, aoi_path: str,
     return {"ok": bool(res.get("ok")), "src": src, "dst": dst, "aoi": aoi, **res}
 
 
+def resample_raster(src_path: str, dst_path: str,
+                    target_resolution: list[float] | None = None,
+                    reference_path: str = "", method: str = "auto",
+                    categorical: bool | None = None,
+                    target_crs: str = "") -> dict[str, Any]:
+    """Change a raster's pixel size (no clip), writing `dst_path`.
+
+    Give the target grid spacing **either** as `target_resolution` `[x, y]` (in
+    `target_crs`, or the source CRS if omitted) **or** as `reference_path` -- an
+    existing raster whose pixel size is copied.
+    `method`: `"auto"` (default) picks from the data kind and the scale change --
+      categorical downsample -> `mode`, categorical up/same -> `nearest`,
+      continuous downsample -> `average`, continuous up/same -> `bilinear`. Pass
+      an explicit method to force it (sanity-checked; see `invest://resampling`).
+    `categorical`: override the auto probe (`true` = classes, `false` = continuous).
+    `target_crs`: optionally reproject at the same time.
+    Streamed through `gdal.Warp` (memory-bounded, tiled output + overviews). All
+    paths must sit under an allowed folder. Needs the `invest-geo` conda env.
+    """
+    if not target_resolution and not reference_path:
+        return {"ok": False,
+                "error": "provide target_resolution [x, y] or reference_path"}
+    roots = _SETTINGS.allowed_roots()
+    try:
+        src = str(resolve_input_path(src_path, roots))
+        dst = str(resolve_output_path(dst_path, roots))
+        ref = str(resolve_input_path(reference_path, roots)) if reference_path else None
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        res = geo_client.run_resample(
+            src, dst, _SETTINGS, target_resolution=target_resolution,
+            reference=ref, target_crs=(str(target_crs) or None),
+            method=method or "auto",
+            categorical=(None if categorical is None else bool(categorical)))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    return {"ok": bool(res.get("ok")), "src": src, "dst": dst,
+            "reference": ref, **res}
+
+
+def plan_grid(rasters: list[str], reference_path: str = "",
+              target_crs: str = "") -> dict[str, Any]:
+    """Recommend a common analysis grid for a set of rasters -- headers only, no
+    file written, cheap.
+
+    InVEST runs at the resolution of its LULC raster (or an explicit pixel size),
+    so aligning a stack means picking one grid on purpose. This reads each
+    raster's CRS / native pixel size / extent, guesses categorical vs continuous,
+    and recommends a target pixel size (the finest categorical layer, or
+    `reference_path` if given). It flags every layer that would be **upsampled
+    >=2x** onto that grid (no real detail gained) and gives a ballpark output
+    cell count + float32 memory.
+
+    Feeds `align_raster_stack` / `resample_raster`. Needs the `invest-geo` env.
+    """
+    if not isinstance(rasters, list) or not rasters:
+        return {"ok": False, "error": "rasters must be a non-empty list of paths"}
+    roots = _SETTINGS.allowed_roots()
+    try:
+        srcs = [str(resolve_input_path(str(r), roots)) for r in rasters]
+        ref = str(resolve_input_path(reference_path, roots)) if reference_path else None
+    except SandboxError as exc:
+        return {"ok": False, "error": str(exc)}
+    try:
+        res = geo_client.run_plan_grid(srcs, _SETTINGS, reference=ref,
+                                       target_crs=(str(target_crs) or None))
+    except RuntimeError as exc:
+        return {"ok": False, "env_missing": True, "error": str(exc)}
+    return {"ok": bool(res.get("ok")), **res}
+
+
 def align_raster_stack(rasters: list[dict], reference_path: str = "",
                        target_crs: str = "", resolution: list[float] | None = None,
                        extent: list[float] | None = None,
-                       resampling: str = "nearest") -> dict[str, Any]:
+                       resampling: str = "auto") -> dict[str, Any]:
     """Put several rasters on one identical grid -- same CRS, pixel size, extent
     and pixel alignment -- so InVEST can stack them.
 
-    `rasters`: list of `{"src": <input path>, "dst": <output path>}`.
+    `rasters`: list of `{"src": <input path>, "dst": <output path>}`. Each item
+      may also carry `"resampling"` (an explicit method for that raster) and/or
+      `"categorical"` (`true`/`false`, overriding the auto probe).
     The target grid comes **either** from `reference_path` (an existing raster
     whose grid is copied exactly) **or** from `target_crs` + `resolution`
     `[x, y]` + `extent` `[minx, miny, maxx, maxy]` given together.
-    `resampling`: `nearest` (default) for categorical layers; `bilinear` /
-      `cubic` / `average` for continuous ones. Applied to every raster -- run the
-      tool twice if a stack mixes categorical and continuous layers.
+    `resampling`: `"auto"` (default) decides **per raster** -- categorical layers
+      get `nearest` (or `mode` when the grid coarsens them), continuous layers
+      get `bilinear` (or `average` when it coarsens). So a mixed stack no longer
+      needs two passes. Set an explicit method to force every raster; a per-item
+      `"resampling"` always wins. Each output reports the method used and any
+      caveat (`resampling_note`); run `plan_grid` first to choose the grid.
     All paths must sit under an allowed folder. Needs the `invest-geo` conda env.
     """
     if not isinstance(rasters, list) or not rasters:
@@ -1161,10 +1244,15 @@ def align_raster_stack(rasters: list[dict], reference_path: str = "",
         for i, item in enumerate(rasters):
             if not isinstance(item, dict) or "src" not in item or "dst" not in item:
                 return {"ok": False, "error": f"rasters[{i}] needs 'src' and 'dst'"}
-            norm.append({
+            entry = {
                 "src": str(resolve_input_path(str(item["src"]), roots)),
                 "dst": str(resolve_output_path(str(item["dst"]), roots)),
-            })
+            }
+            if item.get("resampling"):
+                entry["resampling"] = str(item["resampling"])
+            if item.get("categorical") is not None:
+                entry["categorical"] = bool(item["categorical"])
+            norm.append(entry)
         ref = str(resolve_input_path(reference_path, roots)) if reference_path else None
     except SandboxError as exc:
         return {"ok": False, "error": str(exc)}
@@ -1177,7 +1265,7 @@ def align_raster_stack(rasters: list[dict], reference_path: str = "",
         res = geo_client.run_align_stack(
             norm, _SETTINGS, reference=ref,
             target_crs=(str(target_crs) or None), resolution=resolution,
-            extent=extent, resampling=resampling or "nearest")
+            extent=extent, resampling=resampling or "auto")
     except RuntimeError as exc:
         return {"ok": False, "env_missing": True, "error": str(exc)}
     return {"ok": bool(res.get("ok")), "reference": ref, **res}
@@ -2201,6 +2289,8 @@ _TOOLS = [
     fetch_hydrography,
     reproject_layer,
     clip_to_aoi,
+    resample_raster,
+    plan_grid,
     align_raster_stack,
     delineate_watersheds,
     tables_from_template,
