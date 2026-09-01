@@ -35,9 +35,14 @@ Both are read straight over HTTPS with GDAL ``/vsicurl/`` -- no credentials.
 Output (stdout, JSON): a description of the written raster, the tiles used /
 missing, the provider host, and the (buffered) WGS84 bbox.
 
-Only stdlib is imported at module load. Note: the mosaic is read into memory for
-the reproject step -- fine for typical watershed extents, but a very large AOI
-would want windowed processing (same caveat as :mod:`invest_mcp.geo.compare`).
+Only stdlib is imported at module load.
+
+Memory: the mosaic is assembled **block by block** (``_download_layer`` walks the
+output grid in tiles of ``INVEST_MCP_FETCH_BLOCK_PX`` px/side, default 4096), so
+peak RAM is one block regardless of AOI size -- ported from the user's
+``FUNCTIONS/worldcover.py`` after a real OOM on a continent-scale extent. The
+downstream reproject / clip already stream through ``gdal.Warp``
+(:mod:`invest_mcp.geo.resampling`), so the whole fetch path is RAM-bounded.
 """
 
 from __future__ import annotations
@@ -172,13 +177,35 @@ def reproject_clip_describe(wgs84_tif, dst, work, *, target_crs=None,
     return _describe_raster(dst)
 
 
+def _fetch_block_px() -> int:
+    """Output-pixel side of the mosaic block. 4096 px = ~16 MB uint8 /
+    ~64 MB float32 per block; overridable with ``INVEST_MCP_FETCH_BLOCK_PX``."""
+    try:
+        v = int(os.environ.get("INVEST_MCP_FETCH_BLOCK_PX", "4096"))
+    except ValueError:
+        v = 4096
+    return max(256, v)
+
+
+def _mosaic_grid(bbox: list[float], rx: float, ry: float):
+    """``(width, height, (west, north))`` for a native-resolution EPSG:4326 grid
+    that covers ``bbox`` -- rounded up so the last row/column is never clipped."""
+    width = max(1, math.ceil((bbox[2] - bbox[0]) / rx - 1e-9))
+    height = max(1, math.ceil((bbox[3] - bbox[1]) / ry - 1e-9))
+    return width, height, (bbox[0], bbox[3])
+
+
 def _download_layer(payload: dict, urls: list[tuple[str, str]], *,
                     nodata_override: float | None, default_resampling: str,
                     coverage_hint: str) -> dict:
-    """Open the /vsicurl/ tiles that exist, mosaic to the bbox, then reproject /
-    clip. Returns ``{"raster", "tiles_used", "tiles_missing"}``."""
+    """Open the /vsicurl/ tiles that exist, mosaic to the bbox **block by block**
+    (peak RAM = one block), then reproject / clip. Returns
+    ``{"raster", "tiles_used", "tiles_missing", "mosaic_blocks", "mosaic_grid"}``."""
+    import numpy as np
     import rasterio
     from rasterio.merge import merge as rio_merge
+    from rasterio.transform import from_origin
+    from rasterio.windows import Window
 
     dst = Path(payload["dst_path"])
     work = dst.parent / f"{dst.stem}_fetch"
@@ -199,22 +226,57 @@ def _download_layer(payload: dict, urls: list[tuple[str, str]], *,
             f"no tiles cover this area ({coverage_hint}). bbox={bbox}, "
             f"tiles tried={missing}")
 
-    merge_kw = {} if nodata_override is None else {"nodata": nodata_override}
-    mosaic, transform = rio_merge(srcs, bounds=tuple(bbox), **merge_kw)
-    profile = srcs[0].profile.copy()
-    src_nodata = srcs[0].nodata
-    for s in srcs:
-        s.close()
-    for k in ("blockxsize", "blockysize", "tiled", "interleave", "photometric"):
-        profile.pop(k, None)
-    out_nodata = nodata_override if nodata_override is not None else src_nodata
-    profile.update(driver="GTiff", count=1, crs="EPSG:4326", transform=transform,
-                   height=mosaic.shape[1], width=mosaic.shape[2], compress="deflate")
-    if out_nodata is not None:
-        profile["nodata"] = out_nodata
     src_tif = str(work / "layer_wgs84.tif")
-    with rasterio.open(src_tif, "w", **profile) as out:
-        out.write(mosaic[0], 1)
+    n_blocks = 0
+    try:
+        ref = srcs[0]
+        rx, ry = (abs(v) for v in ref.res)
+        dtype = ref.dtypes[0]
+        src_nodata = ref.nodata
+        out_nodata = nodata_override if nodata_override is not None else src_nodata
+        fill = out_nodata if out_nodata is not None else 0
+
+        width, height, (west, north) = _mosaic_grid(bbox, rx, ry)
+        transform = from_origin(west, north, rx, ry)
+        block = _fetch_block_px()
+
+        merge_kw: dict = {"res": (rx, ry)}
+        if out_nodata is not None:
+            merge_kw["nodata"] = out_nodata
+
+        profile = dict(
+            driver="GTiff", dtype=dtype, count=1, crs="EPSG:4326",
+            transform=transform, width=width, height=height,
+            compress="deflate", tiled=True, blockxsize=512, blockysize=512,
+            BIGTIFF="IF_SAFER",
+        )
+        if out_nodata is not None:
+            profile["nodata"] = out_nodata
+
+        with rasterio.open(src_tif, "w", **profile) as out:
+            for row0 in range(0, height, block):
+                bh = min(block, height - row0)
+                y1 = north - row0 * ry
+                y0 = north - (row0 + bh) * ry
+                for col0 in range(0, width, block):
+                    bw = min(block, width - col0)
+                    x0 = west + col0 * rx
+                    x1 = west + (col0 + bw) * rx
+                    try:
+                        arr, _ = rio_merge(srcs, bounds=(x0, y0, x1, y1), **merge_kw)
+                        band = arr[0]
+                    except (ValueError, rasterio.errors.RasterioError):
+                        band = np.full((bh, bw), fill, dtype=dtype)
+                    if band.shape != (bh, bw):    # guard float-rounding at the edges
+                        fixed = np.full((bh, bw), fill, dtype=dtype)
+                        h, w = min(bh, band.shape[0]), min(bw, band.shape[1])
+                        fixed[:h, :w] = band[:h, :w]
+                        band = fixed
+                    out.write(band, 1, window=Window(col0, row0, bw, bh))
+                    n_blocks += 1
+    finally:
+        for s in srcs:
+            s.close()
 
     desc = reproject_clip_describe(
         src_tif, dst, work, target_crs=payload.get("target_crs"),
@@ -224,7 +286,8 @@ def _download_layer(payload: dict, urls: list[tuple[str, str]], *,
         and payload.get("aoi_path") else None)
     if not payload.get("keep_intermediate"):
         shutil.rmtree(work, ignore_errors=True)
-    return {"raster": desc, "tiles_used": used, "tiles_missing": missing}
+    return {"raster": desc, "tiles_used": used, "tiles_missing": missing,
+            "mosaic_blocks": n_blocks, "mosaic_grid": [width, height]}
 
 
 def _fetch_dem(payload: dict) -> dict:

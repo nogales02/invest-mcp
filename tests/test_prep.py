@@ -9,6 +9,7 @@ import json
 import pytest
 
 from invest_mcp.geo import client as geo_client
+from invest_mcp.geo import prep as prep_worker
 from invest_mcp.workspace import project, sandbox
 
 
@@ -164,3 +165,108 @@ def test_run_raster_classes_builds_payload(captured_payload):
     assert captured_payload["payload"] == {
         "op": "raster_classes", "src": "lulc.tif", "max_classes": 50,
     }
+
+
+def test_run_align_stack_defaults_to_auto_resampling(captured_payload):
+    geo_client.run_align_stack([{"src": "a.tif", "dst": "o.tif"}], settings=None,
+                               reference="ref.tif")
+    assert captured_payload["payload"]["resampling"] == "auto"
+
+
+def test_run_resample_builds_payload(captured_payload):
+    geo_client.run_resample("a.tif", "b.tif", settings=None,
+                            target_resolution=[30.0, 30.0], categorical=True)
+    assert captured_payload["payload"] == {
+        "op": "resample", "src": "a.tif", "dst": "b.tif",
+        "target_resolution": [30.0, 30.0], "reference": None,
+        "target_crs": None, "method": "auto", "categorical": True,
+    }
+
+
+def test_run_plan_grid_builds_payload(monkeypatch):
+    box = {}
+    monkeypatch.setattr(geo_client, "_run_geo_worker",
+                        lambda module, payload, settings, **kw: box.setdefault("p", payload)
+                        or {"ok": True})
+    geo_client.run_plan_grid(["a.tif", "b.tif"], settings=None, target_crs="EPSG:4326")
+    assert box["p"] == {"op": "plan_grid", "rasters": ["a.tif", "b.tif"],
+                        "reference": None, "target_crs": "EPSG:4326"}
+
+
+# ---------------------------------------------------------------------------
+# prep worker op routing (pure -- no GDAL needed for the error paths)
+# ---------------------------------------------------------------------------
+def test_prep_unknown_op_is_a_clean_error():
+    out = prep_worker.run({"op": "bogus"})
+    assert out["ok"] is False and "unknown op" in out["error"]
+    assert "resample" in out["error"] and "plan_grid" in out["error"]
+
+
+def test_prep_resample_without_target_or_reference_errors():
+    with pytest.raises(ValueError, match="target_resolution"):
+        prep_worker._op_resample({"src": "a.tif", "dst": "b.tif"})
+
+
+def test_prep_align_stack_without_grid_errors():
+    with pytest.raises(ValueError, match="reference"):
+        prep_worker._op_align_stack({"rasters": [{"src": "a.tif", "dst": "b.tif"}]})
+
+
+def test_prep_plan_grid_requires_rasters():
+    with pytest.raises(ValueError, match="non-empty"):
+        prep_worker._op_plan_grid({"rasters": []})
+
+
+# ---------------------------------------------------------------------------
+# resample_raster / plan_grid tool guards
+# ---------------------------------------------------------------------------
+def test_resample_raster_needs_a_target(tmp_path, monkeypatch):
+    from invest_mcp import tools
+
+    monkeypatch.setattr(tools._SETTINGS, "allowed_input_dirs", [tmp_path])
+    src = tmp_path / "a.tif"
+    src.write_bytes(b"x")
+    out = tools.resample_raster(str(src), str(tmp_path / "b.tif"))
+    assert out["ok"] is False and "target_resolution" in out["error"]
+
+
+def test_resample_raster_passes_through_and_reports_env_missing(tmp_path, monkeypatch):
+    from invest_mcp import tools
+
+    monkeypatch.setattr(tools._SETTINGS, "allowed_input_dirs", [tmp_path])
+    src = tmp_path / "a.tif"
+    src.write_bytes(b"x")
+    box = {}
+
+    def fake(src_, dst_, settings, **kw):
+        box.update(kw)
+        raise RuntimeError("invest-geo python not found")
+
+    monkeypatch.setattr(geo_client, "run_resample", fake)
+    out = tools.resample_raster(str(src), str(tmp_path / "b.tif"),
+                                target_resolution=[90.0, 90.0], method="mode",
+                                categorical=True)
+    assert out["ok"] is False and out["env_missing"] is True
+    assert box["target_resolution"] == [90.0, 90.0]
+    assert box["method"] == "mode" and box["categorical"] is True
+
+
+def test_plan_grid_rejects_empty_and_resolves_paths(tmp_path, monkeypatch):
+    from invest_mcp import tools
+
+    monkeypatch.setattr(tools._SETTINGS, "allowed_input_dirs", [tmp_path])
+    assert tools.plan_grid([])["ok"] is False
+
+    r1, r2 = tmp_path / "lulc.tif", tmp_path / "dem.tif"
+    r1.write_bytes(b"x")
+    r2.write_bytes(b"x")
+    seen = {}
+
+    def fake_plan(srcs, settings, **kw):
+        seen["srcs"] = srcs
+        return {"ok": True, "op": "plan_grid", "outputs": [{"layers": []}], "notes": []}
+
+    monkeypatch.setattr(geo_client, "run_plan_grid", fake_plan)
+    out = tools.plan_grid([str(r1), str(r2)])
+    assert out["ok"] is True
+    assert seen["srcs"] == [str(r1.resolve()), str(r2.resolve())]

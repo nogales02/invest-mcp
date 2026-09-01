@@ -33,6 +33,14 @@ def test_model_guide_is_markdown_and_covers_the_installed_models():
         assert section in md
 
 
+def test_resampling_guide_covers_the_decision_matrix():
+    md = resources.resampling_guide()
+    assert md.lstrip().startswith("#")
+    for term in ("Categorical", "Continuous", "`mode`", "`average`", "`nearest`",
+                 "`bilinear`", "analysis grid", "plan_grid", "align_raster_stack"):
+        assert term in md, term
+
+
 def test_recommend_model_playbook_renders_and_points_at_the_reference():
     out = prompts.recommend_model("where is erosion worst in my basin?",
                                   project_root="C:/proj/x")
